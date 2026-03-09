@@ -12,9 +12,10 @@ let territory = {};
 let armies = {}; 
 let regions = {}; 
 
-const TILE_SIZE = 15; 
+// --- ФИНАЛЬНОЕ РЕШЕНИЕ: УМЕНЬШИЛИ КЛЕТКУ В 3 РАЗА (с 15 до 5) ---
+const TILE_SIZE = 5; 
 
-// Вычисление центра региона для спавна войск
+// Вспомогательная функция для расчета центра региона
 function calculateRegionCenter(regionId) {
     let sumX = 0, sumY = 0, count = 0;
     for (const key in territory) {
@@ -46,14 +47,17 @@ io.on('connection', (socket) => {
         const startRegionId = `reg_${socket.id}_cap`;
         regions[startRegionId] = { name: "Столичный регион", owner: socket.id, cells: 0 };
 
-        const spawnTiles = [{dx:0,dy:0}, {dx:1,dy:0}, {dx:-1,dy:0}, {dx:0,dy:1}, {dx:0,dy:-1}, {dx:1,dy:1}, {dx:-1,dy:-1}, {dx:1,dy:-1}, {dx:-1,dy:1}];
-        spawnTiles.forEach(offset => {
-            const cellKey = `${data.x + offset.dx}_${data.y + offset.dy}`;
-            territory[cellKey] = { owner: socket.id, regionId: startRegionId };
-            player.cells++;
-            regions[startRegionId].cells++;
-        });
-
+        // Стартовое пятно (пересчитано под мелкую сетку)
+        for(let dx = -6; dx <= 6; dx++) {
+            for(let dy = -6; dy <= 6; dy++) {
+                if(dx*dx + dy*dy <= 6*6) { // Круглый радиус
+                    const cellKey = `${data.x + dx}_${data.y + dy}`;
+                    territory[cellKey] = { owner: socket.id, regionId: startRegionId };
+                    player.cells++;
+                    regions[startRegionId].cells++;
+                }
+            }
+        }
         io.emit('updateMap', { players, territory, regions });
     });
 
@@ -70,6 +74,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Мобилизация теперь принимает КОЛИЧЕСТВО войск и РЕГИОН
     socket.on('deployArmy', (data) => {
         const player = players[socket.id];
         const amount = parseInt(data.amount);
@@ -82,19 +87,29 @@ io.on('connection', (socket) => {
                 id: armyId, owner: socket.id,
                 x: center.x, y: center.y,
                 targetX: null, targetY: null,
-                count: amount, 
-                speed: 0.25 
+                count: amount, // Число солдат
+                speed: 0.25 // Скорость была 2.5, стала 0.25 (замедлили в 10 раз)
             };
             io.emit('syncArmies', armies);
             io.emit('updateResources', players);
         }
     });
 
+    // Роспуск армий
+    socket.on('disbandArmies', (armyIds) => {
+        armyIds.forEach(id => {
+            if (armies[id] && armies[id].owner === socket.id) {
+                delete armies[id];
+            }
+        });
+        io.emit('syncArmies', armies);
+    });
+
     socket.on('moveArmies', (data) => {
         data.armyIds.forEach(id => {
             if (armies[id] && armies[id].owner === socket.id) {
-                const offsetX = (Math.random() - 0.5) * 20;
-                const offsetY = (Math.random() - 0.5) * 20;
+                const offsetX = (Math.random() - 0.5) * 30; // Больший разброс для мелкой сетки
+                const offsetY = (Math.random() - 0.5) * 30;
                 armies[id].targetX = data.targetX + offsetX;
                 armies[id].targetY = data.targetY + offsetY;
             }
@@ -109,19 +124,20 @@ setInterval(() => {
     let changed = false;
     for (const id in players) {
         if (players[id].isSpawned) {
-            players[id].cap = 5000 + (players[id].cells * 500); 
+            players[id].cap = 5000 + (players[id].cells * 50); 
             
+            // --- СОДЕРЖАНИЕ АРМИИ (0.1$ за солдата) ---
             let maintenance = 0;
             for(const aId in armies) {
                 if(armies[aId].owner === id) maintenance += armies[aId].count * 0.1;
             }
             
-            const income = 100 + (players[id].cells * 15) - maintenance;
+            const income = 100 + (players[id].cells * 1.5) - maintenance;
             players[id].dollars += income; 
-            players[id].lastIncome = income; 
+            players[id].lastIncome = income; // Для UI
             
             if (players[id].military < players[id].cap) {
-                players[id].military += Math.floor(players[id].cells * 5); 
+                players[id].military += Math.floor(players[id].cells * 1.5); 
                 if (players[id].military > players[id].cap) players[id].military = players[id].cap;
             }
             changed = true;
@@ -130,31 +146,34 @@ setInterval(() => {
     if (changed) io.emit('updateResources', players);
 }, 1000);
 
-// Движение, Захват и Боевка (Тик 30 FPS)
+// Движение, Захват, Коллизии и БОЕВКА (Тик 30 FPS)
 setInterval(() => {
     let stateChanged = false;
 
+    // Сброс состояния боя перед новым кадром
+    for(const id in armies) armies[id].inCombat = false;
+
+    // 1. Движение, коллизии и боевые тики
     for (const id in armies) {
         let a = armies[id];
-        let isInCombat = false;
 
-        // БОЕВКА
+        // 2. КОЛЛИЗИИ И ПОИСК БИТВ
         for(const enemyId in armies) {
             if(enemyId !== id && armies[enemyId].owner !== a.owner) {
                 let e = armies[enemyId];
-                if(Math.hypot(e.x - a.x, e.y - a.y) < 15) {
-                    isInCombat = true;
-                    a.count -= e.count * 0.01;
-                    e.count -= a.count * 0.01;
-                    stateChanged = true;
+                if(Math.hypot(e.x - a.x, e.y - a.y) < 18) { // Радиус коллизии 18px
+                    // 3. Останавливаем обе армии
+                    a.targetX = null; a.targetY = null;
+                    e.targetX = null; e.targetY = null;
+                    // Помечаем их как в бою
+                    a.inCombat = true; e.inCombat = true;
+                    a.combatantId = enemyId;
                 }
             }
         }
 
-        if(a.count <= 0) { delete armies[id]; continue; }
-
-        // ДВИЖЕНИЕ И ЗАХВАТ
-        if (!isInCombat && a.targetX !== null && a.targetY !== null) {
+        // Если армия не в бою - она движется
+        if (!a.inCombat && a.targetX !== null && a.targetY !== null) {
             let dx = a.targetX - a.x;
             let dy = a.targetY - a.y;
             let distance = Math.sqrt(dx * dx + dy * dy);
@@ -169,6 +188,7 @@ setInterval(() => {
                 stateChanged = true;
             }
 
+            // Захват территории
             const cellKey = `${Math.floor(a.x / TILE_SIZE)}_${Math.floor(a.y / TILE_SIZE)}`;
             const cell = territory[cellKey];
             if (!cell || cell.owner !== a.owner) {
@@ -177,7 +197,7 @@ setInterval(() => {
                     players[prevOwner].cells--;
                     if (cell.regionId && regions[cell.regionId]) regions[cell.regionId].cells--;
                 }
-                const newRegionId = `reg_${a.owner}_cap`; // Присоединяем к столице
+                const newRegionId = `reg_${a.owner}_cap`;
                 territory[cellKey] = { owner: a.owner, regionId: newRegionId };
                 if (players[a.owner]) players[a.owner].cells++;
                 if (regions[newRegionId]) regions[newRegionId].cells++;
@@ -187,7 +207,26 @@ setInterval(() => {
         }
     }
     
+    // 4. НАНЕСЕНИЕ УРОНА (Тик боя - 1 раз в сек, чтобы не убивать мгновенно)
+    for(const id in armies) {
+        let a = armies[id];
+        if(a.inCombat) {
+            let e = armies[a.combatantId];
+            if(e) {
+                // Взаимный урон (0.5% от численности врага в секунду)
+                a.count -= e.count * 0.005; 
+                e.count -= a.count * 0.005;
+                stateChanged = true;
+            }
+        }
+    }
+
+    // Удаляем мертвые армии
+    for(const id in armies) {
+        if(armies[id].count <= 0) { delete armies[id]; continue; }
+    }
+    
     if (stateChanged) io.emit('syncArmies', armies);
 }, 1000 / 30);
 
-server.listen(process.env.PORT || 3000, () => console.log('Сервер работает на порту ' + (process.env.PORT || 3000)));
+server.listen(process.env.PORT || 3000, () => console.log('Сервер работает'));
