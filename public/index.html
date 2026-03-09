@@ -10,7 +10,9 @@
     <div id="setupScreen">
         <div class="panel">
             <h2>Основать государство</h2>
-            <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
+            <input type="text" id="countryName" placeholder="Название (напр. Рим)" maxlength="20">
+            <br><br>
+            <input type="text" id="countryFlag" placeholder="Флаг (эмодзи, напр. 🦅)" maxlength="2" style="font-size: 24px; text-align: center; width: 60px;">
             <br><br>
             <label>Цвет территории:</label>
             <input type="color" id="countryColor" value="#ff0000">
@@ -19,15 +21,19 @@
         </div>
     </div>
 
-<div id="ui" style="display: none;">
-        <h3 id="myName"></h3>
+    <div id="ui" style="display: none;">
+        <h3><span id="myFlagUI"></span> <span id="myName"></span></h3>
         <p>Площадь: <span id="myArea">0</span> км²</p>
         <p style="color: gold;">Казна: <span id="myGold">0</span> 🪙</p>
+        <p style="color: lightcoral;">Рекруты: <span id="myManpower">0</span> 🪖</p>
         <hr style="border-color: #555;">
-        <p id="gameHint" style="font-size: 14px; color: #aaa;">Кликни по карте, чтобы основать столицу.</p>
+        <button id="mobilizeBtn" style="display: none; background: #c0392b; width: 100%; color: white; border: none; padding: 10px; cursor: pointer; font-weight: bold; border-radius: 5px;">
+            Мобилизация (1000 рекрутов)
+        </button>
+        <p id="gameHint" style="font-size: 14px; color: #aaa; margin-top: 10px;">Кликни по карте, чтобы основать столицу.</p>
     </div>
 
-    <canvas id="gameCanvas"></canvas>
+    <canvas id="gameCanvas" oncontextmenu="return false;"></canvas>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
