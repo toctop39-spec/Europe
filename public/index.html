@@ -6,15 +6,16 @@
     <title>Global Strategy Engine</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body oncontextmenu="return false;"> <div id="setupScreen">
+<body oncontextmenu="return false;">
+    <div id="setupScreen">
         <div class="panel">
             <h2>Основать государство</h2>
             <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
             <br><br>
-            <input type="text" id="countryFlag" placeholder="Флаг (эмодзи, напр. 🇩🇪)" maxlength="2" class="flag-input">
+            <input type="text" id="countryFlag" placeholder="Флаг (напр. 🇺🇦)" maxlength="2" class="flag-input">
             <br><br>
             <label>Цвет на карте:</label>
-            <input type="color" id="countryColor" value="#5e1515">
+            <input type="color" id="countryColor" value="#2b5e8a">
             <br><br>
             <button id="joinBtn">Начать игру</button>
         </div>
@@ -22,14 +23,13 @@
 
     <div id="topBar" style="display: none;">
         <div class="stat"><span id="myFlagUI"></span> <span id="myName"></span></div>
-        <div class="stat text-green">Доллары: <span id="myDollars">0</span> $</div>
+        <div class="stat text-green">Доллары: <span id="myDollars">0</span> $ (<span id="myIncome">0</span>/с)</div>
         <div class="stat text-red">Военная сила: <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
         <div class="stat">Территория: <span id="myArea">0</span> км²</div>
     </div>
 
     <div id="controlPanel" style="display: none;">
         <h3>Управление</h3>
-        <button id="mobilizeBtn" class="btn-military">Мобилизация (1000 ВС)</button>
         <button id="drawRegionBtn" class="btn-civil">Выделить новый регион</button>
         <p id="systemMsg" class="sys-msg">Ожидание приказа...</p>
     </div>
@@ -37,8 +37,11 @@
     <div id="regionPanel" style="display: none;">
         <h3 id="regName">Регион</h3>
         <p>Принадлежит: <span id="regOwner"></span></p>
-        <p>Площадь: <span id="regArea"></span> км²</p>
         <p>ВВП: <span id="regIncome"></span> $/сек</p>
+        <hr style="border-color: #444; margin: 10px 0;">
+        <p style="font-size: 12px; color: #aaa;">Развернуть войска в центре региона:</p>
+        <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px;">
+        <button id="deployBtn" class="btn-military">Развернуть дивизию</button>
         <button id="closeRegBtn" class="btn-close">Закрыть</button>
     </div>
 
