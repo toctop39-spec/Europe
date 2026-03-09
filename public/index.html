@@ -38,16 +38,18 @@
     <div id="regionPanel" style="display: none;">
         <h3 id="regName">Регион</h3>
         <p>Принадлежит: <span id="regOwner"></span></p>
+        <p>Уровень развития: <span id="regLevel">1</span>/10</p>
         <p>ВВП: <span id="regIncome"></span> $/сек</p>
+        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 15px;">Прокачать (<span id="upgradeCost">0</span> $)</button>
+        
         <hr style="border-color: #444; margin: 10px 0;">
-        <p style="font-size: 12px; color: #aaa;">Развернуть войска в центре региона:</p>
+        <p style="font-size: 12px; color: #aaa;">Развернуть войска в центре:</p>
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px;">
         <button id="deployBtn" class="btn-military">Развернуть дивизию</button>
         <button id="closeRegBtn" class="btn-close">Закрыть</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
-
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
 </body>
