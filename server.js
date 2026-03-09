@@ -10,16 +10,15 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// Данные игры
-let players = {}; // Страны игроков
-let territory = {}; // Сетка карты. Формат: "x_y" -> id владельца
+// Хранилище игры
+let players = {}; // Данные стран (цвет, имя, площадь)
+let territory = {}; // Сетка карты: "x_y" -> socket.id
 
 io.on('connection', (socket) => {
-    
-    // Отправляем текущую карту при подключении
+    // Отправляем новому игроку текущую карту
     socket.emit('initData', { players, territory });
 
-    // Игрок создает страну
+    // Игрок основывает страну
     socket.on('joinGame', (data) => {
         players[socket.id] = {
             name: data.name,
@@ -29,35 +28,35 @@ io.on('connection', (socket) => {
         io.emit('playerJoined', { id: socket.id, player: players[socket.id] });
     });
 
-    // Игрок захватывает клетку (красит карту)
+    // Обработка закрашивания клетки
     socket.on('claimCell', (data) => {
-        if (!players[socket.id]) return; // Если еще не создал страну - игнорим
+        if (!players[socket.id]) return; // Запрещаем красить, если не создал страну
 
         const cellKey = `${data.x}_${data.y}`;
         const previousOwner = territory[cellKey];
 
-        // Если клетка чужая, отнимаем у него очки территории
+        // Если отбираем клетку у другого игрока — уменьшаем его счетчик
         if (previousOwner && previousOwner !== socket.id && players[previousOwner]) {
             players[previousOwner].cells--;
         }
 
-        // Захватываем клетку
+        // Записываем клетку на нового владельца
         if (previousOwner !== socket.id) {
             territory[cellKey] = socket.id;
             players[socket.id].cells++;
             
-            // Рассылаем обновление всем
+            // Рассылаем обновление всем игрокам
             io.emit('cellUpdated', { 
                 key: cellKey, 
                 owner: socket.id,
-                players: players // обновленная статистика
+                players: players
             });
         }
     });
 
     socket.on('disconnect', () => {
-        // Страна остается на карте (как бот/нейтрал), но игрок выходит
-        delete players[socket.id];
+        // Игрок ушел, но его империя (цвет на карте) остается
+        console.log(`Игрок отключился: ${socket.id}`);
     });
 });
 
