@@ -9,15 +9,22 @@
 <body oncontextmenu="return false;">
     <div id="setupScreen">
         <div class="panel">
-            <h2>Основать государство</h2>
-            <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
-            <br><br>
-            <input type="text" id="countryFlag" placeholder="Флаг (эмодзи, напр. 🇺🇦)" maxlength="2" class="flag-input">
-            <br><br>
-            <label>Цвет на карте:</label>
-            <input type="color" id="countryColor" value="#2b5e8a">
-            <br><br>
-            <button id="joinBtn">Начать игру</button>
+            <h2>Выбор государства</h2>
+            <select id="countrySelect" style="width: 100%; padding: 10px; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; font-size: 16px;">
+                <option value="new">-- Основать новую страну --</option>
+            </select>
+            
+            <div id="newCountryForm">
+                <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
+                <br><br>
+                <input type="text" id="countryFlag" placeholder="Флаг (напр. 🇺🇦)" maxlength="2" class="flag-input">
+                <br><br>
+                <label>Цвет на карте:</label>
+                <input type="color" id="countryColor" value="#2b5e8a">
+                <br><br>
+            </div>
+            
+            <button id="joinBtn">Войти в игру</button>
         </div>
     </div>
 
@@ -38,12 +45,12 @@
     <div id="regionPanel" style="display: none;">
         <h3 id="regName">Регион</h3>
         <p>Принадлежит: <span id="regOwner"></span></p>
-        <p>Уровень развития: <span id="regLevel">1</span>/10</p>
-        <p>ВВП: <span id="regIncome"></span> $/сек</p>
+        <p>Уровень: <span id="regLevel">1</span>/10</p>
+        <p>ВВП: <span id="regIncome"></span> $/с</p>
         <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 15px;">Прокачать (<span id="upgradeCost">0</span> $)</button>
         
         <hr style="border-color: #444; margin: 10px 0;">
-        <p style="font-size: 12px; color: #aaa;">Развернуть войска в центре:</p>
+        <p style="font-size: 12px; color: #aaa;">Развернуть войска:</p>
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px;">
         <button id="deployBtn" class="btn-military">Развернуть дивизию</button>
         <button id="closeRegBtn" class="btn-close">Закрыть</button>
