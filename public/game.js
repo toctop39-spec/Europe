@@ -13,8 +13,7 @@ let myId = null; let isPlaying = false; let isSpawned = false;
 let camera = { x: 0, y: 0, zoom: 1 };
 let isPanning = false; let lastMouse = { x: 0, y: 0 };
 
-// Multi-select переменные
-let selectedArmies = []; // Теперь массив!
+let selectedArmies = [];
 let isSelecting = false;
 let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 
@@ -37,7 +36,6 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     isPlaying = true;
 });
 
-// Кнопка развертывания войск
 document.getElementById('deployBtn').addEventListener('click', () => {
     const amount = document.getElementById('deployAmount').value;
     if (clickedRegionId) {
@@ -71,7 +69,6 @@ function updateUI() {
     }
 }
 
-// Вспомогательная: Расчет центров всех регионов для текста
 function getRegionCenters() {
     let centers = {};
     for (const key in territory) {
@@ -85,76 +82,57 @@ function getRegionCenters() {
 
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.save(); 
-    ctx.translate(camera.x, camera.y); 
-    ctx.scale(camera.zoom, camera.zoom);
+    ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
 
     if (bgMap.complete) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // 1. Рисуем заливку суши (полупрозрачно, чтобы видеть карту под ней)
+    // 1. Заливка территорий
     ctx.globalAlpha = 0.55; 
     for (const key in territory) {
         const owner = players[territory[key].owner];
         if (owner) {
             const [x, y] = key.split('_').map(Number);
             ctx.fillStyle = owner.color;
-            // Увеличиваем квадратик на 0.5 пикселя, чтобы между ними не было микро-щелей при зуме
             ctx.fillRect(x * TILE_SIZE - 0.5, y * TILE_SIZE - 0.5, TILE_SIZE + 1, TILE_SIZE + 1);
         }
     }
     ctx.globalAlpha = 1.0; 
 
-    // 2. Рисуем ГРАНИЦЫ (Внешние и Внутренние)
+    // 2. Линии границ (Сплошные внешние и Пунктирные внутренние)
     for (const key in territory) {
         const cell = territory[key];
         const [x, y] = key.split('_').map(Number);
-        const px = x * TILE_SIZE; 
-        const py = y * TILE_SIZE;
+        const px = x * TILE_SIZE; const py = y * TILE_SIZE;
         
         const drawEdge = (nx, ny, x1, y1, x2, y2) => {
             const nKey = `${nx}_${ny}`;
             const nCell = territory[nKey];
-            
-            // Если соседа нет (море/пустота) или он принадлежит ДРУГОЙ стране -> Государственная граница
             if (!nCell || nCell.owner !== cell.owner) {
-                ctx.lineWidth = 1.5; // Сделали тоньше и аккуратнее
-                ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)'; // Почти черный
-                ctx.setLineDash([]); // Сплошная линия
+                ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)'; ctx.setLineDash([]);
                 ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-            } 
-            // Если сосед наш, но принадлежит ДРУГОМУ региону -> Граница региона
-            else if (nCell.regionId !== cell.regionId) {
-                // Рисуем только в одну сторону, чтобы линии не накладывались дважды
-                if (nx >= x && ny >= y) {
-                    ctx.lineWidth = 1; // Тонкая
-                    ctx.strokeStyle = 'rgba(50, 50, 50, 0.5)'; // Полупрозрачная серая
-                    ctx.setLineDash([4, 4]); // Пунктирная линия (4px линия, 4px пробел)
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-                }
+            } else if (nCell.regionId !== cell.regionId) {
+                ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(50, 50, 50, 0.5)'; ctx.setLineDash([4, 4]);
+                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
             }
         };
 
-        drawEdge(x, y-1, px, py, px+TILE_SIZE, py); // Верх
-        drawEdge(x, y+1, px, py+TILE_SIZE, px+TILE_SIZE, py+TILE_SIZE); // Низ
-        drawEdge(x-1, y, px, py, px, py+TILE_SIZE); // Лево
-        drawEdge(x+1, y, px+TILE_SIZE, py, px+TILE_SIZE, py+TILE_SIZE); // Право
+        drawEdge(x, y-1, px, py, px+TILE_SIZE, py);
+        drawEdge(x, y+1, px, py+TILE_SIZE, px+TILE_SIZE, py+TILE_SIZE);
+        drawEdge(x-1, y, px, py, px, py+TILE_SIZE);
+        drawEdge(x+1, y, px+TILE_SIZE, py, px+TILE_SIZE, py+TILE_SIZE);
     }
-    ctx.setLineDash([]); // Сбрасываем пунктир для остальных элементов
+    ctx.setLineDash([]); 
 
-    // 3. Названия регионов (Текст)
+    // 3. Названия регионов
     const regCenters = getRegionCenters();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; 
-    ctx.font = 'bold 11px Arial'; 
-    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
     for (const rId in regCenters) {
         const c = regCenters[rId];
         if (c.count > 0) {
-            const textX = (c.sumX / c.count) * TILE_SIZE + (TILE_SIZE / 2);
-            const textY = (c.sumY / c.count) * TILE_SIZE + (TILE_SIZE / 2);
-            // Черная обводка текста для читаемости
+            const tx = (c.sumX/c.count)*TILE_SIZE + (TILE_SIZE/2);
+            const ty = (c.sumY/c.count)*TILE_SIZE + (TILE_SIZE/2);
             ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2;
-            ctx.strokeText(c.name, textX, textY);
-            ctx.fillText(c.name, textX, textY);
+            ctx.strokeText(c.name, tx, ty); ctx.fillText(c.name, tx, ty);
         }
     }
 
@@ -186,21 +164,16 @@ function drawMap() {
         ctx.fillText(countText, army.x, army.y + 14);
     }
 
-    // 5. Рамка выделения мыши
+    // 5. Рамка выделения
     if (isSelecting) {
-        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)';
-        ctx.strokeStyle = '#2ecc71';
-        ctx.lineWidth = 1;
-        const w = selectionBox.endX - selectionBox.startX;
-        const h = selectionBox.endY - selectionBox.startY;
-        ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h);
-        ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
+        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1;
+        const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
+        ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
     }
 
     ctx.restore();
 }
 
-// --- УПРАВЛЕНИЕ КАМЕРОЙ И ВЫДЕЛЕНИЕМ ---
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const zoomAmount = 0.1; const oldZoom = camera.zoom;
@@ -217,15 +190,11 @@ function getWorldCoords(e) {
     const rect = canvas.getBoundingClientRect();
     const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    return {
-        x: (canvasMouseX - camera.x) / camera.zoom,
-        y: (canvasMouseY - camera.y) / camera.zoom
-    };
+    return { x: (canvasMouseX - camera.x) / camera.zoom, y: (canvasMouseY - camera.y) / camera.zoom };
 }
 
 canvas.addEventListener('mousedown', (e) => { 
     const world = getWorldCoords(e);
-
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
 
     if (e.button === 0) {
@@ -233,10 +202,7 @@ canvas.addEventListener('mousedown', (e) => {
             socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) });
             return;
         }
-        
         if (isDrawingRegion) return;
-
-        // Начинаем выделение рамкой
         isSelecting = true;
         selectionBox.startX = world.x; selectionBox.startY = world.y;
         selectionBox.endX = world.x; selectionBox.endY = world.y;
@@ -253,9 +219,7 @@ canvas.addEventListener('mousemove', (e) => {
         lastMouse = {x: e.clientX, y: e.clientY};
         drawMap(); return;
     }
-    
     const world = getWorldCoords(e);
-    
     if (isSelecting) {
         selectionBox.endX = world.x; selectionBox.endY = world.y;
         drawMap();
@@ -266,35 +230,27 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
-    
     if (e.button === 0 && isSelecting) {
-        isSelecting = false;
-        selectedArmies = []; // Сброс старого выделения
-        
-        // Нормализуем координаты рамки
+        isSelecting = false; selectedArmies = [];
         const minX = Math.min(selectionBox.startX, selectionBox.endX);
         const maxX = Math.max(selectionBox.startX, selectionBox.endX);
         const minY = Math.min(selectionBox.startY, selectionBox.endY);
         const maxY = Math.max(selectionBox.startY, selectionBox.endY);
-
-        // Проверяем, кто попал в рамку (или если рамка маленькая - это был просто клик)
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
 
         for (const id in armies) {
             const a = armies[id];
             if (a.owner === myId) {
                 if (isClick && Math.hypot(a.x - minX, a.y - minY) <= 12) {
-                    selectedArmies.push(id); break; // Выделили одну по клику
+                    selectedArmies.push(id); break; 
                 } else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) {
-                    selectedArmies.push(id); // Выделили рамкой
+                    selectedArmies.push(id);
                 }
             }
         }
-
-        // Если никого не выделили, открываем панель региона
         if (selectedArmies.length === 0 && isClick) {
             const cellKey = `${Math.floor(minX/TILE_SIZE)}_${Math.floor(minY/TILE_SIZE)}`;
-            if (territory[cellKey]) {
+            if (territory[cellKey] && territory[cellKey].owner === myId) {
                 clickedRegionId = territory[cellKey].regionId;
                 updateRegionPanel();
             } else {
