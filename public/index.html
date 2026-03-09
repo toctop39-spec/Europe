@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Strategy</title>
+    <title>Глобальная Стратегия</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="setupScreen">
         <div class="panel">
-            <h2>Создать страну</h2>
-            <input type="text" id="countryName" placeholder="Название страны" maxlength="15">
+            <h2>Основать государство</h2>
+            <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
             <br><br>
-            <label>Цвет на карте:</label>
+            <label>Цвет территории:</label>
             <input type="color" id="countryColor" value="#ff0000">
             <br><br>
             <button id="joinBtn">Начать игру</button>
@@ -20,8 +20,8 @@
     </div>
 
     <div id="ui" style="display: none;">
-        <h3><span id="myName"></span></h3>
-        <p>Территория: <span id="myScore">0</span> км²</p>
+        <h3 id="myName"></h3>
+        <p>Площадь: <span id="myScore">0</span> км²</p>
     </div>
 
     <canvas id="gameCanvas"></canvas>
