@@ -12,10 +12,8 @@ let territory = {};
 let armies = {}; 
 let regions = {}; 
 
-// --- ФИНАЛЬНОЕ РЕШЕНИЕ: УМЕНЬШИЛИ КЛЕТКУ В 3 РАЗА (с 15 до 5) ---
 const TILE_SIZE = 5; 
 
-// Вспомогательная функция для расчета центра региона
 function calculateRegionCenter(regionId) {
     let sumX = 0, sumY = 0, count = 0;
     for (const key in territory) {
@@ -47,10 +45,9 @@ io.on('connection', (socket) => {
         const startRegionId = `reg_${socket.id}_cap`;
         regions[startRegionId] = { name: "Столичный регион", owner: socket.id, cells: 0 };
 
-        // Стартовое пятно (пересчитано под мелкую сетку)
         for(let dx = -6; dx <= 6; dx++) {
             for(let dy = -6; dy <= 6; dy++) {
-                if(dx*dx + dy*dy <= 6*6) { // Круглый радиус
+                if(dx*dx + dy*dy <= 6*6) { 
                     const cellKey = `${data.x + dx}_${data.y + dy}`;
                     territory[cellKey] = { owner: socket.id, regionId: startRegionId };
                     player.cells++;
@@ -74,7 +71,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Мобилизация теперь принимает КОЛИЧЕСТВО войск и РЕГИОН
     socket.on('deployArmy', (data) => {
         const player = players[socket.id];
         const amount = parseInt(data.amount);
@@ -87,15 +83,14 @@ io.on('connection', (socket) => {
                 id: armyId, owner: socket.id,
                 x: center.x, y: center.y,
                 targetX: null, targetY: null,
-                count: amount, // Число солдат
-                speed: 0.25 // Скорость была 2.5, стала 0.25 (замедлили в 10 раз)
+                count: amount, 
+                speed: 0.25 
             };
             io.emit('syncArmies', armies);
             io.emit('updateResources', players);
         }
     });
 
-    // Роспуск армий
     socket.on('disbandArmies', (armyIds) => {
         armyIds.forEach(id => {
             if (armies[id] && armies[id].owner === socket.id) {
@@ -106,10 +101,11 @@ io.on('connection', (socket) => {
     });
 
     socket.on('moveArmies', (data) => {
-        data.armyIds.forEach(id => {
+        // ИСПРАВЛЕНИЕ: Аккуратное выстраивание армий вокруг точки без разброса и телепортаций
+        data.armyIds.forEach((id, index) => {
             if (armies[id] && armies[id].owner === socket.id) {
-                const offsetX = (Math.random() - 0.5) * 30; // Больший разброс для мелкой сетки
-                const offsetY = (Math.random() - 0.5) * 30;
+                const offsetX = (index % 3) * 3 - 3; 
+                const offsetY = Math.floor(index / 3) * 3 - 3;
                 armies[id].targetX = data.targetX + offsetX;
                 armies[id].targetY = data.targetY + offsetY;
             }
@@ -119,14 +115,12 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete players[socket.id]; });
 });
 
-// Экономика (Тик 1 сек)
 setInterval(() => {
     let changed = false;
     for (const id in players) {
         if (players[id].isSpawned) {
             players[id].cap = 5000 + (players[id].cells * 50); 
             
-            // --- СОДЕРЖАНИЕ АРМИИ (0.1$ за солдата) ---
             let maintenance = 0;
             for(const aId in armies) {
                 if(armies[aId].owner === id) maintenance += armies[aId].count * 0.1;
@@ -134,7 +128,7 @@ setInterval(() => {
             
             const income = 100 + (players[id].cells * 1.5) - maintenance;
             players[id].dollars += income; 
-            players[id].lastIncome = income; // Для UI
+            players[id].lastIncome = income; 
             
             if (players[id].military < players[id].cap) {
                 players[id].military += Math.floor(players[id].cells * 1.5); 
@@ -146,33 +140,26 @@ setInterval(() => {
     if (changed) io.emit('updateResources', players);
 }, 1000);
 
-// Движение, Захват, Коллизии и БОЕВКА (Тик 30 FPS)
 setInterval(() => {
     let stateChanged = false;
 
-    // Сброс состояния боя перед новым кадром
     for(const id in armies) armies[id].inCombat = false;
 
-    // 1. Движение, коллизии и боевые тики
     for (const id in armies) {
         let a = armies[id];
 
-        // 2. КОЛЛИЗИИ И ПОИСК БИТВ
         for(const enemyId in armies) {
             if(enemyId !== id && armies[enemyId].owner !== a.owner) {
                 let e = armies[enemyId];
-                if(Math.hypot(e.x - a.x, e.y - a.y) < 18) { // Радиус коллизии 18px
-                    // 3. Останавливаем обе армии
+                if(Math.hypot(e.x - a.x, e.y - a.y) < 18) { 
                     a.targetX = null; a.targetY = null;
                     e.targetX = null; e.targetY = null;
-                    // Помечаем их как в бою
                     a.inCombat = true; e.inCombat = true;
                     a.combatantId = enemyId;
                 }
             }
         }
 
-        // Если армия не в бою - она движется
         if (!a.inCombat && a.targetX !== null && a.targetY !== null) {
             let dx = a.targetX - a.x;
             let dy = a.targetY - a.y;
@@ -183,12 +170,14 @@ setInterval(() => {
                 a.y += (dy / distance) * a.speed;
                 stateChanged = true;
             } else {
-                a.x = a.targetX; a.y = a.targetY;
-                a.targetX = null; a.targetY = null;
+                // ИСПРАВЛЕНИЕ: Жесткая фиксация координат по прибытии (убирает прыжки)
+                a.x = a.targetX; 
+                a.y = a.targetY;
+                a.targetX = null; 
+                a.targetY = null;
                 stateChanged = true;
             }
 
-            // Захват территории
             const cellKey = `${Math.floor(a.x / TILE_SIZE)}_${Math.floor(a.y / TILE_SIZE)}`;
             const cell = territory[cellKey];
             if (!cell || cell.owner !== a.owner) {
@@ -207,13 +196,11 @@ setInterval(() => {
         }
     }
     
-    // 4. НАНЕСЕНИЕ УРОНА (Тик боя - 1 раз в сек, чтобы не убивать мгновенно)
     for(const id in armies) {
         let a = armies[id];
         if(a.inCombat) {
             let e = armies[a.combatantId];
             if(e) {
-                // Взаимный урон (0.5% от численности врага в секунду)
                 a.count -= e.count * 0.005; 
                 e.count -= a.count * 0.005;
                 stateChanged = true;
@@ -221,7 +208,6 @@ setInterval(() => {
         }
     }
 
-    // Удаляем мертвые армии
     for(const id in armies) {
         if(armies[id].count <= 0) { delete armies[id]; continue; }
     }
