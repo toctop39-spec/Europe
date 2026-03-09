@@ -3,37 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Глобальная Стратегия</title>
+    <title>Global Strategy Engine</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
-    <div id="setupScreen">
+<body oncontextmenu="return false;"> <div id="setupScreen">
         <div class="panel">
             <h2>Основать государство</h2>
-            <input type="text" id="countryName" placeholder="Название (напр. Рим)" maxlength="20">
+            <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
             <br><br>
-            <input type="text" id="countryFlag" placeholder="Флаг (эмодзи, напр. 🦅)" maxlength="2" style="font-size: 24px; text-align: center; width: 60px;">
+            <input type="text" id="countryFlag" placeholder="Флаг (эмодзи, напр. 🇩🇪)" maxlength="2" class="flag-input">
             <br><br>
-            <label>Цвет территории:</label>
-            <input type="color" id="countryColor" value="#ff0000">
+            <label>Цвет на карте:</label>
+            <input type="color" id="countryColor" value="#5e1515">
             <br><br>
             <button id="joinBtn">Начать игру</button>
         </div>
     </div>
 
-    <div id="ui" style="display: none;">
-        <h3><span id="myFlagUI"></span> <span id="myName"></span></h3>
-        <p>Площадь: <span id="myArea">0</span> км²</p>
-        <p style="color: gold;">Казна: <span id="myGold">0</span> 🪙</p>
-        <p style="color: lightcoral;">Рекруты: <span id="myManpower">0</span> 🪖</p>
-        <hr style="border-color: #555;">
-        <button id="mobilizeBtn" style="display: none; background: #c0392b; width: 100%; color: white; border: none; padding: 10px; cursor: pointer; font-weight: bold; border-radius: 5px;">
-            Мобилизация (1000 рекрутов)
-        </button>
-        <p id="gameHint" style="font-size: 14px; color: #aaa; margin-top: 10px;">Кликни по карте, чтобы основать столицу.</p>
+    <div id="topBar" style="display: none;">
+        <div class="stat"><span id="myFlagUI"></span> <span id="myName"></span></div>
+        <div class="stat text-green">Доллары: <span id="myDollars">0</span> $</div>
+        <div class="stat text-red">Военная сила: <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
+        <div class="stat">Территория: <span id="myArea">0</span> км²</div>
     </div>
 
-    <canvas id="gameCanvas" oncontextmenu="return false;"></canvas>
+    <div id="controlPanel" style="display: none;">
+        <h3>Управление</h3>
+        <button id="mobilizeBtn" class="btn-military">Мобилизация (1000 ВС)</button>
+        <button id="drawRegionBtn" class="btn-civil">Выделить новый регион</button>
+        <p id="systemMsg" class="sys-msg">Ожидание приказа...</p>
+    </div>
+
+    <div id="regionPanel" style="display: none;">
+        <h3 id="regName">Регион</h3>
+        <p>Принадлежит: <span id="regOwner"></span></p>
+        <p>Площадь: <span id="regArea"></span> км²</p>
+        <p>ВВП: <span id="regIncome"></span> $/сек</p>
+        <button id="closeRegBtn" class="btn-close">Закрыть</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
 
     <script src="/socket.io/socket.io.js"></script>
     <script src="game.js"></script>
