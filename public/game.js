@@ -11,7 +11,7 @@ canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 let territory = {}; let players = {}; let armies = {}; let regions = {};
 let myId = null; let isPlaying = false; let isSpawned = false;
 
-// Визцальные армии (для плавного движения)
+// Визуальные армии для интерполяции (плавности)
 let visualArmies = {};
 
 let camera = { x: 0, y: 0, zoom: 1 };
@@ -28,10 +28,7 @@ function showMsg(text) { sysMsg.innerText = text; setTimeout(() => sysMsg.innerT
 
 const bgMap = new Image(); 
 bgMap.src = 'Map.png'; 
-bgMap.onload = () => {
-    // ЗАПУСК ИГРОВОГО ЦИКЛА (60 FPS)
-    requestAnimationFrame(gameLoop);
-};
+bgMap.onload = () => { requestAnimationFrame(gameLoop); };
 
 document.getElementById('joinBtn').addEventListener('click', () => {
     const name = document.getElementById('countryName').value || 'Империя';
@@ -85,7 +82,6 @@ socket.on('updateMap', (data) => { players = data.players; territory = data.terr
 socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
 socket.on('updateResources', (p) => { players = p; updateUI(); });
 
-// ИСПРАВЛЕНИЕ: Получаем только измененную клетку (убирает лаги)
 socket.on('cellUpdate', (data) => {
     territory[data.key] = data.cell;
     regions = data.regions;
@@ -96,7 +92,6 @@ socket.on('cellUpdate', (data) => {
 
 socket.on('syncArmies', (a) => { 
     armies = a; 
-    // Если появилась новая армия - создаем ее визуальный клон
     for(let id in armies) {
         if(!visualArmies[id]) {
             visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count };
@@ -104,27 +99,23 @@ socket.on('syncArmies', (a) => {
     }
 });
 
-// --- ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ (60 FPS) ---
+// --- ИГРОВОЙ ЦИКЛ (60 FPS) ---
 function gameLoop() {
-    // 1. Интерполяция (Плавное движение)
     for(let id in visualArmies) {
         if(armies[id]) {
-            // Плавно подтягиваем визуал к реальным координатам сервера (сглаживание прыжков)
+            // Плавная интерполяция
             visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.3;
             visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.3;
             visualArmies[id].count = armies[id].count;
             visualArmies[id].owner = armies[id].owner;
             visualArmies[id].inCombat = armies[id].inCombat;
+            visualArmies[id].targetX = armies[id].targetX;
+            visualArmies[id].targetY = armies[id].targetY;
         } else {
-            // Армия убита или распущена
             delete visualArmies[id];
         }
     }
-
-    // 2. Отрисовка кадра
     drawMap();
-
-    // 3. Запрос следующего кадра
     requestAnimationFrame(gameLoop);
 }
 
@@ -157,6 +148,7 @@ function drawMap() {
 
     if (bgMap.complete) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
+    // 1. Заливка территорий
     ctx.globalAlpha = 0.55; 
     for (const key in territory) {
         const owner = players[territory[key].owner];
@@ -167,6 +159,7 @@ function drawMap() {
         }
     }
 
+    // 2. ИДЕАЛЬНЫЕ ГРАНИЦЫ
     ctx.globalAlpha = 1.0;
     const LINE_W = 1.5; 
     const step = TILE_SIZE;
@@ -175,7 +168,6 @@ function drawMap() {
         const nCell = territory[`${nx}_${ny}`];
         return nCell ? nCell.owner : null;
     };
-    
     const getCellRegion = (nx, ny) => {
         const nCell = territory[`${nx}_${ny}`];
         return nCell ? nCell.regionId : null;
@@ -199,6 +191,7 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
+    // 3. Названия регионов
     const regCenters = getRegionCenters();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
     for (const rId in regCenters) {
@@ -211,32 +204,58 @@ function drawMap() {
         }
     }
 
-    let stacks = {}; 
-    const stackGridSize = 35; 
-    // ИСПОЛЬЗУЕМ visualArmies ДЛЯ ПЛАВНОЙ ОТРИСОВКИ
+    // 4. ИСПРАВЛЕННЫЕ АРМИИ (Плавное динамическое стекирование без сетки)
+    let stacks = []; 
     for(const id in visualArmies) {
         const army = visualArmies[id];
-        const gridKey = `${Math.floor(army.x / stackGridSize)}_${Math.floor(army.y / stackGridSize)}`;
-        if(!stacks[gridKey]) stacks[gridKey] = { owner: army.owner, count: 0, flag: players[army.owner]?.flag || '🏳️', armies: [], inCombat: false };
-        stacks[gridKey].count += army.count;
-        stacks[gridKey].armies.push(id);
-        if(army.inCombat) stacks[gridKey].inCombat = true; 
+        let foundStack = false;
+
+        // Ищем близлежащий стек того же владельца
+        for(let stack of stacks) {
+            if(stack.owner === army.owner && Math.hypot(stack.x - army.x, stack.y - army.y) < 25) {
+                stack.count += army.count;
+                stack.armies.push(id);
+                if(army.inCombat) stack.inCombat = true;
+                foundStack = true;
+                break;
+            }
+        }
+
+        // Если не нашли - создаем новый
+        if(!foundStack) {
+            stacks.push({
+                x: army.x,
+                y: army.y,
+                owner: army.owner,
+                count: army.count,
+                flag: players[army.owner]?.flag || '🏳️',
+                armies: [id],
+                inCombat: army.inCombat,
+                targetX: army.targetX,
+                targetY: army.targetY
+            });
+        }
     }
 
-    for(const key in stacks) {
-        const stack = stacks[key];
+    for(let stack of stacks) {
         const owner = players[stack.owner];
         if (!owner) continue;
 
-        const [gx, gy] = key.split('_').map(Number);
-        const armyX = gx * stackGridSize + stackGridSize/2;
-        const armyY = gy * stackGridSize + stackGridSize/2;
+        // Координаты стека = координаты первой армии в нем (плавные)
+        const armyX = stack.x;
+        const armyY = stack.y;
 
         let stackSelected = stack.armies.some(aId => selectedArmies.includes(aId));
 
         if (stackSelected) {
             ctx.beginPath(); ctx.arc(armyX, armyY, 12, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
+            
+            // Линия приказа (опционально, рисуем от лидера стека)
+            if (stack.targetX !== null) {
+                ctx.beginPath(); ctx.moveTo(armyX, armyY); ctx.lineTo(stack.targetX, stack.targetY);
+                ctx.strokeStyle = 'rgba(46, 204, 113, 0.5)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+            }
         }
 
         const stackSize = Math.min(3, Math.ceil(stack.count / 1000)); 
@@ -264,6 +283,7 @@ function drawMap() {
         ctx.fillText(countText, armyX, armyY + 14);
     }
 
+    // 5. Рамка выделения
     if (isSelecting) {
         ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1;
         const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
@@ -289,10 +309,7 @@ function getWorldCoords(e) {
     const rect = canvas.getBoundingClientRect();
     const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    return {
-        x: (canvasMouseX - camera.x) / camera.zoom,
-        y: (canvasMouseY - camera.y) / camera.zoom
-    };
+    return { x: (canvasMouseX - camera.x) / camera.zoom, y: (canvasMouseY - camera.y) / camera.zoom };
 }
 
 canvas.addEventListener('mousedown', (e) => { 
@@ -351,7 +368,7 @@ canvas.addEventListener('mouseup', (e) => {
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
         selectedArmies = [];
 
-        // Проверяем по ВИЗУАЛЬНЫМ армиям
+        // Проверяем выделение по визуальным армиям
         for (const id in visualArmies) {
             const a = visualArmies[id];
             if (a.owner === myId) {
