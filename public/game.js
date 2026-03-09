@@ -11,9 +11,7 @@ canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 let territory = {}; let players = {}; let armies = {}; let regions = {};
 let myId = null; let isPlaying = false; let isSpawned = false;
 
-// Визуальные армии для интерполяции (плавности)
 let visualArmies = {};
-
 let camera = { x: 0, y: 0, zoom: 1 };
 let isPanning = false; let lastMouse = {x: 0, y: 0};
 
@@ -42,11 +40,12 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     isPlaying = true;
 });
 
+// Кнопки войск
 document.getElementById('deployBtn').addEventListener('click', () => {
     const amount = document.getElementById('deployAmount').value;
     if (clickedRegionId) {
         socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount });
-        showMsg(`Приказ на развертывание ${amount} солдат отдан!`);
+        showMsg(`Развертывание ${amount} солдат!`);
     }
 });
 
@@ -56,6 +55,13 @@ document.getElementById('disbandBtn').addEventListener('click', () => {
         showMsg("Дивизии распущены.");
         selectedArmies = []; 
         document.getElementById('disbandBtn').style.display = 'none';
+    }
+});
+
+// Кнопка прокачки региона
+document.getElementById('upgradeBtn').addEventListener('click', () => {
+    if (clickedRegionId && regions[clickedRegionId]) {
+        socket.emit('upgradeRegion', clickedRegionId);
     }
 });
 
@@ -75,12 +81,12 @@ document.getElementById('closeRegBtn').addEventListener('click', () => {
     clickedRegionId = null;
 });
 
-// --- СЕТЕВЫЕ СОБЫТИЯ ---
+// СЕТЬ
 socket.on('connect', () => { myId = socket.id; });
 socket.on('initData', (data) => { players = data.players; territory = data.territory; armies = data.armies; regions = data.regions; });
 socket.on('updateMap', (data) => { players = data.players; territory = data.territory; regions = data.regions; if (players[myId] && players[myId].isSpawned) isSpawned = true; updateUI(); });
 socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
-socket.on('updateResources', (p) => { players = p; updateUI(); });
+socket.on('updateResources', (p) => { players = p; updateUI(); updateRegionPanel(); });
 
 socket.on('cellUpdate', (data) => {
     territory[data.key] = data.cell;
@@ -93,19 +99,16 @@ socket.on('cellUpdate', (data) => {
 socket.on('syncArmies', (a) => { 
     armies = a; 
     for(let id in armies) {
-        if(!visualArmies[id]) {
-            visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count };
-        }
+        if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; }
     }
 });
 
-// --- ИГРОВОЙ ЦИКЛ (60 FPS) ---
+// ДВИЖОК
 function gameLoop() {
     for(let id in visualArmies) {
         if(armies[id]) {
-            // Плавная интерполяция
-            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.3;
-            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.3;
+            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4;
+            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4;
             visualArmies[id].count = armies[id].count;
             visualArmies[id].owner = armies[id].owner;
             visualArmies[id].inCombat = armies[id].inCombat;
@@ -141,14 +144,14 @@ function getRegionCenters() {
     return centers;
 }
 
-// --- ОТРИСОВКА ---
+// ОТРИСОВКА
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
 
     if (bgMap.complete) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // 1. Заливка территорий
+    // Заливка территорий
     ctx.globalAlpha = 0.55; 
     for (const key in territory) {
         const owner = players[territory[key].owner];
@@ -159,7 +162,7 @@ function drawMap() {
         }
     }
 
-    // 2. ИДЕАЛЬНЫЕ ГРАНИЦЫ
+    // Жесткие Границы
     ctx.globalAlpha = 1.0;
     const LINE_W = 1.5; 
     const step = TILE_SIZE;
@@ -176,8 +179,7 @@ function drawMap() {
     for (const key in territory) {
         const cell = territory[key];
         const [ix, iy] = key.split('_').map(Number);
-        const x = ix * step;
-        const y = iy * step;
+        const x = ix * step; const y = iy * step;
         const owner = cell.owner;
 
         ctx.fillStyle = 'rgba(20, 20, 20, 0.9)'; 
@@ -191,7 +193,7 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
-    // 3. Названия регионов
+    // Названия регионов
     const regCenters = getRegionCenters();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
     for (const rId in regCenters) {
@@ -204,86 +206,44 @@ function drawMap() {
         }
     }
 
-    // 4. ИСПРАВЛЕННЫЕ АРМИИ (Плавное динамическое стекирование без сетки)
-    let stacks = []; 
+    // АРМИИ КАК ЖЕСТКИЕ ТЕЛА (Без стопок)
     for(const id in visualArmies) {
         const army = visualArmies[id];
-        let foundStack = false;
-
-        // Ищем близлежащий стек того же владельца
-        for(let stack of stacks) {
-            if(stack.owner === army.owner && Math.hypot(stack.x - army.x, stack.y - army.y) < 25) {
-                stack.count += army.count;
-                stack.armies.push(id);
-                if(army.inCombat) stack.inCombat = true;
-                foundStack = true;
-                break;
-            }
-        }
-
-        // Если не нашли - создаем новый
-        if(!foundStack) {
-            stacks.push({
-                x: army.x,
-                y: army.y,
-                owner: army.owner,
-                count: army.count,
-                flag: players[army.owner]?.flag || '🏳️',
-                armies: [id],
-                inCombat: army.inCombat,
-                targetX: army.targetX,
-                targetY: army.targetY
-            });
-        }
-    }
-
-    for(let stack of stacks) {
-        const owner = players[stack.owner];
+        const owner = players[army.owner];
         if (!owner) continue;
 
-        // Координаты стека = координаты первой армии в нем (плавные)
-        const armyX = stack.x;
-        const armyY = stack.y;
-
-        let stackSelected = stack.armies.some(aId => selectedArmies.includes(aId));
-
-        if (stackSelected) {
-            ctx.beginPath(); ctx.arc(armyX, armyY, 12, 0, Math.PI * 2);
+        // Зеленая подсветка выделения
+        if (selectedArmies.includes(id)) {
+            ctx.beginPath(); ctx.arc(army.x, army.y, 10, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
-            
-            // Линия приказа (опционально, рисуем от лидера стека)
-            if (stack.targetX !== null) {
-                ctx.beginPath(); ctx.moveTo(armyX, armyY); ctx.lineTo(stack.targetX, stack.targetY);
-                ctx.strokeStyle = 'rgba(46, 204, 113, 0.5)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+            if (army.targetX !== null) {
+                ctx.beginPath(); ctx.moveTo(army.x, army.y); ctx.lineTo(army.targetX, army.targetY);
+                ctx.strokeStyle = 'rgba(46, 204, 113, 0.4)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
             }
         }
 
-        const stackSize = Math.min(3, Math.ceil(stack.count / 1000)); 
+        // Тело армии
+        ctx.beginPath(); ctx.arc(army.x, army.y, 6, 0, Math.PI * 2); 
+        ctx.fillStyle = owner.color; ctx.fill();
         
-        for(let i = 0; i < stackSize; i++) {
-            const offsetX = i * 4;
-            const offsetY = i * 4;
-
-            ctx.beginPath(); ctx.arc(armyX + offsetX, armyY - offsetY, 7, 0, Math.PI * 2); 
-            ctx.fillStyle = owner.color; ctx.fill();
-            if(stack.inCombat) { 
-                ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(192, 57, 43, 0.8)';
-            } else {
-                ctx.lineWidth = 1; ctx.strokeStyle = '#222';
-            }
-            ctx.stroke();
-
-            ctx.fillStyle = 'white'; ctx.font = '8px Arial'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-            ctx.fillText(stack.flag, armyX + offsetX, armyY - offsetY);
+        // Красная аура если в бою
+        if(army.inCombat) { 
+            ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(192, 57, 43, 1)';
+        } else {
+            ctx.lineWidth = 1; ctx.strokeStyle = '#fff';
         }
+        ctx.stroke();
 
-        ctx.fillStyle = 'white'; ctx.font = 'bold 10px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2.5;
-        const countText = Math.floor(stack.count).toString();
-        ctx.strokeText(countText, armyX, armyY + 14);
-        ctx.fillText(countText, armyX, armyY + 14);
+        ctx.fillStyle = 'white'; ctx.font = '7px Arial'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+        ctx.fillText(owner.flag, army.x, army.y);
+
+        ctx.fillStyle = 'white'; ctx.font = 'bold 9px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
+        const countText = Math.floor(army.count).toString();
+        ctx.strokeText(countText, army.x, army.y + 11);
+        ctx.fillText(countText, army.x, army.y + 11);
     }
 
-    // 5. Рамка выделения
+    // Рамка выделения мыши
     if (isSelecting) {
         ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1;
         const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
@@ -293,7 +253,7 @@ function drawMap() {
     ctx.restore();
 }
 
-// --- УПРАВЛЕНИЕ МЫШЬЮ И КАМЕРОЙ ---
+// УПРАВЛЕНИЕ
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const zoomAmount = 0.1; const oldZoom = camera.zoom;
@@ -314,17 +274,11 @@ function getWorldCoords(e) {
 
 canvas.addEventListener('mousedown', (e) => { 
     const world = getWorldCoords(e);
-
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
 
     if (e.button === 0) {
-        if (!isSpawned) {
-            socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) });
-            return;
-        }
-        
+        if (!isSpawned) { socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) }); return; }
         if (isDrawingRegion) return;
-
         isSelecting = true;
         selectionBox.startX = world.x; selectionBox.startY = world.y;
         selectionBox.endX = world.x; selectionBox.endY = world.y;
@@ -337,14 +291,10 @@ canvas.addEventListener('mousedown', (e) => {
 
 canvas.addEventListener('mousemove', (e) => { 
     if (isPanning) {
-        camera.x += (e.clientX - lastMouse.x);
-        camera.y += (e.clientY - lastMouse.y);
-        lastMouse = {x: e.clientX, y: e.clientY};
-        return;
+        camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y);
+        lastMouse = {x: e.clientX, y: e.clientY}; return;
     }
-    
     const world = getWorldCoords(e);
-    
     if (isSelecting) {
         selectionBox.endX = world.x; selectionBox.endY = world.y;
     } else if (isDrawingRegion && e.buttons === 1) {
@@ -360,24 +310,16 @@ canvas.addEventListener('mouseup', (e) => {
         const world = getWorldCoords(e);
         selectionBox.endX = world.x; selectionBox.endY = world.y;
         
-        const minX = Math.min(selectionBox.startX, selectionBox.endX);
-        const maxX = Math.max(selectionBox.startX, selectionBox.endX);
-        const minY = Math.min(selectionBox.startY, selectionBox.endY);
-        const maxY = Math.max(selectionBox.startY, selectionBox.endY);
-
+        const minX = Math.min(selectionBox.startX, selectionBox.endX); const maxX = Math.max(selectionBox.startX, selectionBox.endX);
+        const minY = Math.min(selectionBox.startY, selectionBox.endY); const maxY = Math.max(selectionBox.startY, selectionBox.endY);
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
         selectedArmies = [];
 
-        // Проверяем выделение по визуальным армиям
         for (const id in visualArmies) {
             const a = visualArmies[id];
             if (a.owner === myId) {
-                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= 20) { 
-                    selectedArmies.push(id);
-                } 
-                else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) {
-                    selectedArmies.push(id);
-                }
+                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= 12) { selectedArmies.push(id); } 
+                else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) { selectedArmies.push(id); }
             }
         }
 
@@ -402,10 +344,29 @@ canvas.addEventListener('mouseup', (e) => {
 function updateRegionPanel() {
     if (!clickedRegionId || !regions[clickedRegionId]) return;
     const reg = regions[clickedRegionId];
-    const ownerName = players[reg.owner] ? players[reg.owner].name : "Неизвестно";
     
     document.getElementById('regionPanel').style.display = 'block';
     document.getElementById('regName').innerText = reg.name;
-    document.getElementById('regOwner').innerText = ownerName;
-    document.getElementById('regIncome').innerText = (reg.cells * 1.5).toLocaleString(); 
+    document.getElementById('regOwner').innerText = players[reg.owner] ? players[reg.owner].name : "Неизвестно";
+    document.getElementById('regLevel').innerText = reg.level;
+    document.getElementById('regIncome').innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
+
+    // Обновляем кнопку прокачки
+    const upgradeCost = reg.cells * reg.level * 50;
+    const btn = document.getElementById('upgradeBtn');
+    
+    if (reg.owner === myId) {
+        btn.style.display = 'block';
+        if (reg.level >= 10) {
+            btn.innerText = "Максимальный уровень";
+            btn.disabled = true;
+            btn.style.background = '#7f8c8d';
+        } else {
+            btn.innerText = `Прокачать (${upgradeCost.toLocaleString()} $)`;
+            btn.disabled = players[myId].dollars < upgradeCost;
+            btn.style.background = btn.disabled ? '#7f8c8d' : '#27ae60';
+        }
+    } else {
+        btn.style.display = 'none'; // Нельзя качать чужие регионы
+    }
 }
