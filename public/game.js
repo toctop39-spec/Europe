@@ -85,52 +85,76 @@ function getRegionCenters() {
 
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
+    ctx.save(); 
+    ctx.translate(camera.x, camera.y); 
+    ctx.scale(camera.zoom, camera.zoom);
 
     if (bgMap.complete) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // 1. Рисуем заливку суши
-    ctx.globalAlpha = 0.5; 
+    // 1. Рисуем заливку суши (полупрозрачно, чтобы видеть карту под ней)
+    ctx.globalAlpha = 0.55; 
     for (const key in territory) {
         const owner = players[territory[key].owner];
         if (owner) {
             const [x, y] = key.split('_').map(Number);
             ctx.fillStyle = owner.color;
-            ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            // Увеличиваем квадратик на 0.5 пикселя, чтобы между ними не было микро-щелей при зуме
+            ctx.fillRect(x * TILE_SIZE - 0.5, y * TILE_SIZE - 0.5, TILE_SIZE + 1, TILE_SIZE + 1);
         }
     }
     ctx.globalAlpha = 1.0; 
 
-    // 2. Рисуем ЖЕСТКИЕ ГРАНИЦЫ (Линии)
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'black';
+    // 2. Рисуем ГРАНИЦЫ (Внешние и Внутренние)
     for (const key in territory) {
         const cell = territory[key];
         const [x, y] = key.split('_').map(Number);
-        const px = x * TILE_SIZE; const py = y * TILE_SIZE;
+        const px = x * TILE_SIZE; 
+        const py = y * TILE_SIZE;
         
-        // Функция проверки соседа
         const drawEdge = (nx, ny, x1, y1, x2, y2) => {
             const nKey = `${nx}_${ny}`;
             const nCell = territory[nKey];
-            // Если соседа нет (вода) или он чужой - рисуем черную линию
+            
+            // Если соседа нет (море/пустота) или он принадлежит ДРУГОЙ стране -> Государственная граница
             if (!nCell || nCell.owner !== cell.owner) {
+                ctx.lineWidth = 1.5; // Сделали тоньше и аккуратнее
+                ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)'; // Почти черный
+                ctx.setLineDash([]); // Сплошная линия
                 ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+            } 
+            // Если сосед наш, но принадлежит ДРУГОМУ региону -> Граница региона
+            else if (nCell.regionId !== cell.regionId) {
+                // Рисуем только в одну сторону, чтобы линии не накладывались дважды
+                if (nx >= x && ny >= y) {
+                    ctx.lineWidth = 1; // Тонкая
+                    ctx.strokeStyle = 'rgba(50, 50, 50, 0.5)'; // Полупрозрачная серая
+                    ctx.setLineDash([4, 4]); // Пунктирная линия (4px линия, 4px пробел)
+                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+                }
             }
         };
+
         drawEdge(x, y-1, px, py, px+TILE_SIZE, py); // Верх
         drawEdge(x, y+1, px, py+TILE_SIZE, px+TILE_SIZE, py+TILE_SIZE); // Низ
         drawEdge(x-1, y, px, py, px, py+TILE_SIZE); // Лево
         drawEdge(x+1, y, px+TILE_SIZE, py, px+TILE_SIZE, py+TILE_SIZE); // Право
     }
+    ctx.setLineDash([]); // Сбрасываем пунктир для остальных элементов
 
-    // 3. Названия регионов
+    // 3. Названия регионов (Текст)
     const regCenters = getRegionCenters();
-    ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.font = 'bold 12px Arial'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; 
+    ctx.font = 'bold 11px Arial'; 
+    ctx.textAlign = 'center';
     for (const rId in regCenters) {
         const c = regCenters[rId];
         if (c.count > 0) {
-            ctx.fillText(c.name, (c.sumX/c.count)*TILE_SIZE, (c.sumY/c.count)*TILE_SIZE);
+            const textX = (c.sumX / c.count) * TILE_SIZE + (TILE_SIZE / 2);
+            const textY = (c.sumY / c.count) * TILE_SIZE + (TILE_SIZE / 2);
+            // Черная обводка текста для читаемости
+            ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2;
+            ctx.strokeText(c.name, textX, textY);
+            ctx.fillText(c.name, textX, textY);
         }
     }
 
@@ -145,25 +169,24 @@ function drawMap() {
             ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
             if (army.targetX !== null) {
                 ctx.beginPath(); ctx.moveTo(army.x, army.y); ctx.lineTo(army.targetX, army.targetY);
-                ctx.strokeStyle = 'rgba(46, 204, 113, 0.5)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
+                ctx.strokeStyle = 'rgba(46, 204, 113, 0.7)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
             }
         }
 
         ctx.beginPath(); ctx.arc(army.x, army.y, 8, 0, Math.PI * 2);
         ctx.fillStyle = owner.color; ctx.fill();
-        ctx.lineWidth = 1; ctx.strokeStyle = '#fff'; ctx.stroke();
+        ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
         
         ctx.fillStyle = 'white'; ctx.font = '10px Arial'; ctx.textBaseline = 'middle';
         ctx.fillText(owner.flag, army.x, army.y);
         
-        // Цифра количества войск под значком
-        ctx.fillStyle = 'white'; ctx.font = 'bold 10px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
+        ctx.fillStyle = 'white'; ctx.font = 'bold 10px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2.5;
         const countText = Math.floor(army.count).toString();
         ctx.strokeText(countText, army.x, army.y + 14);
         ctx.fillText(countText, army.x, army.y + 14);
     }
 
-    // 5. Рамка выделения
+    // 5. Рамка выделения мыши
     if (isSelecting) {
         ctx.fillStyle = 'rgba(46, 204, 113, 0.2)';
         ctx.strokeStyle = '#2ecc71';
