@@ -9,10 +9,12 @@ const io = new Server(server);
 app.use(express.static('public'));
 
 let players = {}; 
-let territory = {}; // "x_y" -> { owner: socket.id, regionId: string }
+let territory = {}; 
 let capitals = {}; 
 let armies = {}; 
-let regions = {}; // regionId -> { name, owner, cells }
+let regions = {}; 
+
+const TILE_SIZE = 15; // Размер клетки
 
 io.on('connection', (socket) => {
     socket.emit('initData', { players, territory, capitals, armies, regions });
@@ -32,8 +34,7 @@ io.on('connection', (socket) => {
         capitals[socket.id] = { x: data.x, y: data.y };
         player.isSpawned = true;
 
-        // Создаем стартовый регион
-        const startRegionId = `reg_${socket.id}_1`;
+        const startRegionId = `reg_${socket.id}_cap`;
         regions[startRegionId] = { name: "Столичный регион", owner: socket.id, cells: 0 };
 
         const spawnTiles = [{dx:0,dy:0}, {dx:1,dy:0}, {dx:-1,dy:0}, {dx:0,dy:1}, {dx:0,dy:-1}, {dx:1,dy:1}, {dx:-1,dy:-1}, {dx:1,dy:-1}, {dx:-1,dy:1}];
@@ -47,14 +48,10 @@ io.on('connection', (socket) => {
         io.emit('updateMap', { players, territory, capitals, regions });
     });
 
-    // Механика: Рисование нового региона
     socket.on('paintRegion', (data) => {
         const cell = territory[`${data.x}_${data.y}`];
         if (cell && cell.owner === socket.id) {
-            // Убираем из старого региона
             if (regions[cell.regionId]) regions[cell.regionId].cells--;
-            
-            // Записываем в новый
             cell.regionId = data.newRegionId;
             if (!regions[data.newRegionId]) {
                 regions[data.newRegionId] = { name: `Регион ${Object.keys(regions).length + 1}`, owner: socket.id, cells: 0 };
@@ -72,8 +69,10 @@ io.on('connection', (socket) => {
             const armyId = Math.random().toString(36).substr(2, 9);
             armies[armyId] = {
                 id: armyId, owner: socket.id,
-                x: cap.x * 15 + 7.5, y: cap.y * 15 + 7.5,
-                targetX: null, targetY: null, speed: 2.5
+                x: cap.x * TILE_SIZE + (TILE_SIZE / 2), 
+                y: cap.y * TILE_SIZE + (TILE_SIZE / 2),
+                targetX: null, targetY: null, 
+                speed: 0.25 // ЗАМЕДЛИЛИ АРМИЮ В 10 РАЗ (было 2.5)
             };
             io.emit('syncArmies', armies);
             io.emit('updateResources', players);
@@ -95,11 +94,11 @@ setInterval(() => {
     let changed = false;
     for (const id in players) {
         if (players[id].isSpawned) {
-            players[id].cap = 5000 + (players[id].cells * 500); // Лимит армии растет от территории
-            players[id].dollars += 100 + (players[id].cells * 15); // Налоги
+            players[id].cap = 5000 + (players[id].cells * 500); 
+            players[id].dollars += 100 + (players[id].cells * 15); 
             
             if (players[id].military < players[id].cap) {
-                players[id].military += Math.floor(players[id].cells * 5); // Призыв
+                players[id].military += Math.floor(players[id].cells * 5); 
                 if (players[id].military > players[id].cap) players[id].military = players[id].cap;
             }
             changed = true;
@@ -108,15 +107,18 @@ setInterval(() => {
     if (changed) io.emit('updateResources', players);
 }, 1000);
 
-// Движение армий (Тик 30 FPS)
+// Движение армий и ЗАХВАТ ТЕРРИТОРИЙ (Тик 30 FPS)
 setInterval(() => {
     let armiesMoved = false;
+    let territoryChanged = false;
+
     for (const id in armies) {
         let a = armies[id];
         if (a.targetX !== null && a.targetY !== null) {
             let dx = a.targetX - a.x;
             let dy = a.targetY - a.y;
             let distance = Math.sqrt(dx * dx + dy * dy);
+            
             if (distance > a.speed) {
                 a.x += (dx / distance) * a.speed;
                 a.y += (dy / distance) * a.speed;
@@ -126,9 +128,36 @@ setInterval(() => {
                 a.targetX = null; a.targetY = null;
                 armiesMoved = true;
             }
+
+            // --- ЛОГИКА ЗАХВАТА ---
+            const gridX = Math.floor(a.x / TILE_SIZE);
+            const gridY = Math.floor(a.y / TILE_SIZE);
+            const cellKey = `${gridX}_${gridY}`;
+            
+            const cell = territory[cellKey];
+            // Если клетка пустая или чужая — забираем её
+            if (!cell || cell.owner !== a.owner) {
+                const prevOwner = cell ? cell.owner : null;
+                
+                // Отнимаем у старого владельца
+                if (prevOwner && players[prevOwner]) {
+                    players[prevOwner].cells--;
+                    if (cell.regionId && regions[cell.regionId]) regions[cell.regionId].cells--;
+                }
+
+                // Назначаем новому владельцу (присоединяем к его столичному региону)
+                const newRegionId = `reg_${a.owner}_cap`;
+                territory[cellKey] = { owner: a.owner, regionId: newRegionId };
+                
+                if (players[a.owner]) players[a.owner].cells++;
+                if (regions[newRegionId]) regions[newRegionId].cells++;
+
+                territoryChanged = true;
+            }
         }
     }
     if (armiesMoved) io.emit('syncArmies', armies);
+    if (territoryChanged) io.emit('syncTerritory', { territory, regions });
 }, 1000 / 30);
 
 server.listen(process.env.PORT || 3000, () => console.log('Сервер работает'));
