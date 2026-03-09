@@ -1,118 +1,112 @@
 const socket = io();
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const playerIdSpan = document.getElementById('playerId');
 
-// Настройка размера холста
-function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    draw(); // Перерисовываем при изменении окна
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-let gameState = { cities: [] };
+const TILE_SIZE = 20; // Размер одной клетки территории в пикселях
+
+let territory = {};
+let players = {};
 let myId = null;
-let geoJSON = null;
+let isPlaying = false;
 
-// При подключении получаем свой ID
+// --- UI Логика ---
+document.getElementById('joinBtn').addEventListener('click', () => {
+    const name = document.getElementById('countryName').value || 'Неизвестная Империя';
+    const color = document.getElementById('countryColor').value;
+    
+    socket.emit('joinGame', { name, color });
+    
+    document.getElementById('setupScreen').style.display = 'none';
+    document.getElementById('ui').style.display = 'block';
+    document.getElementById('myName').innerText = name;
+    document.getElementById('myName').style.color = color;
+    isPlaying = true;
+});
+
+// --- Сетевая логика ---
 socket.on('connect', () => {
     myId = socket.id;
-    playerIdSpan.innerText = myId.substring(0, 5);
 });
 
-// Получаем начальное состояние городов
-socket.on('gameState', (state) => {
-    gameState = state;
-    draw();
+socket.on('initData', (data) => {
+    players = data.players;
+    territory = data.territory;
+    drawMap();
 });
 
-// Обновление карты в реальном времени
-socket.on('updateMap', (state) => {
-    gameState = state;
-    draw();
+socket.on('playerJoined', (data) => {
+    players[data.id] = data.player;
 });
 
-// Загружаем гео-данные мира (с помощью кода, никаких картинок)
-fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
-    .then(response => response.json())
-    .then(data => {
-        geoJSON = data;
-        draw(); // Перерисовываем, когда данные загрузятся
-    });
+socket.on('cellUpdated', (data) => {
+    territory[data.key] = data.owner;
+    players = data.players;
+    updateUI();
+    drawMap();
+});
 
-// Функция-проекция: переводит реальные координаты (широту и долготу) в пиксели на экране
-function project(lng, lat) {
-    // Рамки для Европы: от Атлантики до Урала, от Африки до Скандинавии
-    const minLng = -15, maxLng = 45;
-    const minLat = 35, maxLat = 70;
-
-    // Высчитываем масштаб, чтобы карта сохраняла пропорции и не растягивалась
-    const scaleX = canvas.width / (maxLng - minLng);
-    const scaleY = canvas.height / (maxLat - minLat);
-    const scale = Math.min(scaleX, scaleY); // Берем минимальный, чтобы влезло всё без искажений
-
-    // Центрируем карту на экране
-    const offsetX = (canvas.width - (maxLng - minLng) * scale) / 2;
-    const offsetY = (canvas.height - (maxLat - minLat) * scale) / 2;
-
-    const x = (lng - minLng) * scale + offsetX;
-    // Широта инвертирована (в программировании Y идет вниз, а на картах вверх)
-    const y = canvas.height - ((lat - minLat) * scale) - offsetY;
-
-    return { x, y };
+function updateUI() {
+    if (players[myId]) {
+        document.getElementById('myScore').innerText = players[myId].cells * 10; // условно 10 км2 за клетку
+    }
 }
 
-// Вспомогательная функция для отрисовки полигонов суши
-function drawPolygon(coordinates) {
-    ctx.beginPath();
-    coordinates.forEach((coord, index) => {
-        const point = project(coord[0], coord[1]);
-        if (index === 0) ctx.moveTo(point.x, point.y);
-        else ctx.lineTo(point.x, point.y);
-    });
-    ctx.fill();
-    // Обрати внимание: мы НЕ используем ctx.stroke(), поэтому границ стран не будет!
-}
-
-// Главная функция отрисовки
-function draw() {
-    // 1. Рисуем море (фон)
-    ctx.fillStyle = '#2c3e50'; // Темно-синий цвет океана
+// --- Отрисовка ---
+function drawMap() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Рисуем фон (море/пустошь)
+    ctx.fillStyle = '#1e272e';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 2. Рисуем сушу кодом
-    if (geoJSON) {
-        ctx.fillStyle = '#ecf0f1'; // Светлый цвет суши
-        geoJSON.features.forEach(feature => {
-            if (feature.geometry.type === 'Polygon') {
-                drawPolygon(feature.geometry.coordinates[0]);
-            } else if (feature.geometry.type === 'MultiPolygon') {
-                feature.geometry.coordinates.forEach(polygon => {
-                    drawPolygon(polygon[0]);
-                });
-            }
-        });
+    // Рисуем захваченные территории
+    for (const key in territory) {
+        const ownerId = territory[key];
+        const owner = players[ownerId];
+        
+        if (owner) {
+            const [x, y] = key.split('_').map(Number);
+            
+            ctx.fillStyle = owner.color;
+            ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            
+            // Легкая обводка для стиля (границы)
+            ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+            ctx.strokeRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
     }
-
-    // 3. Рисуем города игроков
-    gameState.cities.forEach(city => {
-        ctx.fillStyle = city.owner === myId ? '#3498db' : '#e74c3c';
-        ctx.beginPath();
-        ctx.arc(city.x, city.y, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#111';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-    });
 }
 
-// Обработка клика (постройка города)
-canvas.addEventListener('click', (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
+// --- Взаимодействие (Клик = Захват) ---
+// Для удобства сделаем так, чтобы можно было зажать мышку и "красить" карту
+let isDragging = false;
 
-    socket.emit('buildCity', { x: x, y: y });
+canvas.addEventListener('mousedown', () => isDragging = true);
+canvas.addEventListener('mouseup', () => isDragging = false);
+canvas.addEventListener('mousemove', (e) => {
+    if (isDragging && isPlaying) claimArea(e);
+});
+canvas.addEventListener('click', (e) => {
+    if (isPlaying) claimArea(e);
+});
+
+function claimArea(event) {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+
+    // Вычисляем, в какую клетку попал клик
+    const gridX = Math.floor(mouseX / TILE_SIZE);
+    const gridY = Math.floor(mouseY / TILE_SIZE);
+
+    socket.emit('claimCell', { x: gridX, y: gridY });
+}
+
+window.addEventListener('resize', () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    drawMap();
 });
