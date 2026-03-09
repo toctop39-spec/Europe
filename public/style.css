@@ -1,3 +1,24 @@
+body, html {
+    margin: 0;
+    padding: 0;
+    background-color: #111; /* Темный фон вокруг карты */
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center; /* Центрируем карту на экране */
+}
+
+#gameCanvas {
+    /* Карта будет автоматически масштабироваться под экран, НЕ ломая пропорции */
+    max-width: 100vw;
+    max-height: 100vh;
+    object-fit: contain; 
+}
+
+/* ... остальной код для #setupScreen и #ui оставляй как был ... */
+
 /* Добавь это в конец твоего style.css */
 #setupScreen {
     position: absolute;
