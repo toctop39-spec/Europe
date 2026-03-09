@@ -40,48 +40,29 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     isPlaying = true;
 });
 
-// Кнопки войск
 document.getElementById('deployBtn').addEventListener('click', () => {
     const amount = document.getElementById('deployAmount').value;
-    if (clickedRegionId) {
-        socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount });
-        showMsg(`Развертывание ${amount} солдат!`);
-    }
+    if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); showMsg(`Развертывание ${amount} солдат!`); }
 });
 
 document.getElementById('disbandBtn').addEventListener('click', () => {
-    if (selectedArmies.length > 0) {
-        socket.emit('disbandArmies', selectedArmies);
-        showMsg("Дивизии распущены.");
-        selectedArmies = []; 
-        document.getElementById('disbandBtn').style.display = 'none';
-    }
+    if (selectedArmies.length > 0) { socket.emit('disbandArmies', selectedArmies); showMsg("Дивизии распущены."); selectedArmies = []; document.getElementById('disbandBtn').style.display = 'none'; }
 });
 
-// Кнопка прокачки региона
 document.getElementById('upgradeBtn').addEventListener('click', () => {
-    if (clickedRegionId && regions[clickedRegionId]) {
-        socket.emit('upgradeRegion', clickedRegionId);
-    }
+    if (clickedRegionId && regions[clickedRegionId]) socket.emit('upgradeRegion', clickedRegionId);
 });
 
 document.getElementById('drawRegionBtn').addEventListener('click', () => {
     isDrawingRegion = !isDrawingRegion;
     document.getElementById('drawRegionBtn').innerText = isDrawingRegion ? "Сохранить регион" : "Выделить новый регион";
-    if (isDrawingRegion) {
-        currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`;
-        showMsg("Зажмите ЛКМ и проведите по территории");
-    } else {
-        showMsg("Регион сохранен!");
-    }
+    if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Зажмите ЛКМ и проведите по территории");
+    } else { showMsg("Регион сохранен!"); }
 });
 
-document.getElementById('closeRegBtn').addEventListener('click', () => {
-    document.getElementById('regionPanel').style.display = 'none';
-    clickedRegionId = null;
-});
+document.getElementById('closeRegBtn').addEventListener('click', () => { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; });
 
-// СЕТЬ
+// --- СОБЫТИЯ СЕРВЕРА ---
 socket.on('connect', () => { myId = socket.id; });
 socket.on('initData', (data) => { players = data.players; territory = data.territory; armies = data.armies; regions = data.regions; });
 socket.on('updateMap', (data) => { players = data.players; territory = data.territory; regions = data.regions; if (players[myId] && players[myId].isSpawned) isSpawned = true; updateUI(); });
@@ -89,34 +70,31 @@ socket.on('syncTerritory', (data) => { territory = data.territory; regions = dat
 socket.on('updateResources', (p) => { players = p; updateUI(); updateRegionPanel(); });
 
 socket.on('cellUpdate', (data) => {
-    territory[data.key] = data.cell;
-    regions = data.regions;
-    if (data.players) players = data.players;
-    updateUI();
-    updateRegionPanel();
+    territory[data.key] = data.cell; regions = data.regions; if (data.players) players = data.players;
+    updateUI(); updateRegionPanel();
+});
+
+// НОВОЕ: Обработка ПАКЕТОВ для красивой анимации котлов
+socket.on('batchCellUpdate', (data) => {
+    for (const key in data.cells) { territory[key] = data.cells[key]; }
+    regions = data.regions; if (data.players) players = data.players;
+    updateUI(); updateRegionPanel();
 });
 
 socket.on('syncArmies', (a) => { 
     armies = a; 
-    for(let id in armies) {
-        if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; }
-    }
+    for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } }
 });
 
-// ДВИЖОК
+// --- ДВИЖОК ---
 function gameLoop() {
     for(let id in visualArmies) {
         if(armies[id]) {
             visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4;
             visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4;
-            visualArmies[id].count = armies[id].count;
-            visualArmies[id].owner = armies[id].owner;
-            visualArmies[id].inCombat = armies[id].inCombat;
-            visualArmies[id].targetX = armies[id].targetX;
-            visualArmies[id].targetY = armies[id].targetY;
-        } else {
-            delete visualArmies[id];
-        }
+            visualArmies[id].count = armies[id].count; visualArmies[id].owner = armies[id].owner;
+            visualArmies[id].inCombat = armies[id].inCombat; visualArmies[id].targetX = armies[id].targetX; visualArmies[id].targetY = armies[id].targetY;
+        } else { delete visualArmies[id]; }
     }
     drawMap();
     requestAnimationFrame(gameLoop);
@@ -144,43 +122,32 @@ function getRegionCenters() {
     return centers;
 }
 
-// ОТРИСОВКА
+// --- ОТРИСОВКА ---
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
 
     if (bgMap.complete) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // Заливка территорий
     ctx.globalAlpha = 0.55; 
     for (const key in territory) {
         const owner = players[territory[key].owner];
         if (owner) {
             const [ix, iy] = key.split('_').map(Number);
-            ctx.fillStyle = owner.color;
-            ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = owner.color; ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
     }
 
-    // Жесткие Границы
     ctx.globalAlpha = 1.0;
-    const LINE_W = 1.5; 
-    const step = TILE_SIZE;
+    const LINE_W = 1.5; const step = TILE_SIZE;
 
-    const getCellOwner = (nx, ny) => {
-        const nCell = territory[`${nx}_${ny}`];
-        return nCell ? nCell.owner : null;
-    };
-    const getCellRegion = (nx, ny) => {
-        const nCell = territory[`${nx}_${ny}`];
-        return nCell ? nCell.regionId : null;
-    };
+    const getCellOwner = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.owner : null; };
+    const getCellRegion = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.regionId : null; };
 
     for (const key in territory) {
         const cell = territory[key];
         const [ix, iy] = key.split('_').map(Number);
-        const x = ix * step; const y = iy * step;
-        const owner = cell.owner;
+        const x = ix * step; const y = iy * step; const owner = cell.owner;
 
         ctx.fillStyle = 'rgba(20, 20, 20, 0.9)'; 
         if (getCellOwner(ix, iy - 1) !== owner) ctx.fillRect(x, y, step, LINE_W); 
@@ -193,57 +160,41 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
-    // Названия регионов
     const regCenters = getRegionCenters();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
     for (const rId in regCenters) {
         const c = regCenters[rId];
         if (c.count > 0) {
-            const tx = (c.sumX/c.count)*TILE_SIZE + (TILE_SIZE/2);
-            const ty = (c.sumY/c.count)*TILE_SIZE + (TILE_SIZE/2);
+            const tx = (c.sumX/c.count)*TILE_SIZE + (TILE_SIZE/2); const ty = (c.sumY/c.count)*TILE_SIZE + (TILE_SIZE/2);
             ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2;
             ctx.strokeText(c.name, tx, ty); ctx.fillText(c.name, tx, ty);
         }
     }
 
-    // АРМИИ КАК ЖЕСТКИЕ ТЕЛА (Без стопок)
     for(const id in visualArmies) {
-        const army = visualArmies[id];
-        const owner = players[army.owner];
+        const army = visualArmies[id]; const owner = players[army.owner];
         if (!owner) continue;
 
-        // Зеленая подсветка выделения
         if (selectedArmies.includes(id)) {
-            ctx.beginPath(); ctx.arc(army.x, army.y, 10, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(army.x, army.y, 10, 0, Math.PI * 2); ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
             if (army.targetX !== null) {
                 ctx.beginPath(); ctx.moveTo(army.x, army.y); ctx.lineTo(army.targetX, army.targetY);
                 ctx.strokeStyle = 'rgba(46, 204, 113, 0.4)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
             }
         }
 
-        // Тело армии
         ctx.beginPath(); ctx.arc(army.x, army.y, 6, 0, Math.PI * 2); 
         ctx.fillStyle = owner.color; ctx.fill();
         
-        // Красная аура если в бою
-        if(army.inCombat) { 
-            ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(192, 57, 43, 1)';
-        } else {
-            ctx.lineWidth = 1; ctx.strokeStyle = '#fff';
-        }
+        if(army.inCombat) { ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(192, 57, 43, 1)'; } else { ctx.lineWidth = 1; ctx.strokeStyle = '#fff'; }
         ctx.stroke();
 
-        ctx.fillStyle = 'white'; ctx.font = '7px Arial'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-        ctx.fillText(owner.flag, army.x, army.y);
-
+        ctx.fillStyle = 'white'; ctx.font = '7px Arial'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.fillText(owner.flag, army.x, army.y);
         ctx.fillStyle = 'white'; ctx.font = 'bold 9px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2;
         const countText = Math.floor(army.count).toString();
-        ctx.strokeText(countText, army.x, army.y + 11);
-        ctx.fillText(countText, army.x, army.y + 11);
+        ctx.strokeText(countText, army.x, army.y + 11); ctx.fillText(countText, army.x, army.y + 11);
     }
 
-    // Рамка выделения мыши
     if (isSelecting) {
         ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1;
         const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
@@ -253,7 +204,7 @@ function drawMap() {
     ctx.restore();
 }
 
-// УПРАВЛЕНИЕ
+// --- УПРАВЛЕНИЕ ---
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const zoomAmount = 0.1; const oldZoom = camera.zoom;
@@ -261,8 +212,7 @@ canvas.addEventListener('wheel', (e) => {
     const rect = canvas.getBoundingClientRect();
     const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom);
-    camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom);
+    camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom); camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom);
 });
 
 function getWorldCoords(e) {
@@ -279,36 +229,23 @@ canvas.addEventListener('mousedown', (e) => {
     if (e.button === 0) {
         if (!isSpawned) { socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) }); return; }
         if (isDrawingRegion) return;
-        isSelecting = true;
-        selectionBox.startX = world.x; selectionBox.startY = world.y;
-        selectionBox.endX = world.x; selectionBox.endY = world.y;
+        isSelecting = true; selectionBox.startX = world.x; selectionBox.startY = world.y; selectionBox.endX = world.x; selectionBox.endY = world.y;
     }
     
-    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) {
-        socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y });
-    }
+    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) { socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y }); }
 });
 
 canvas.addEventListener('mousemove', (e) => { 
-    if (isPanning) {
-        camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y);
-        lastMouse = {x: e.clientX, y: e.clientY}; return;
-    }
+    if (isPanning) { camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y); lastMouse = {x: e.clientX, y: e.clientY}; return; }
     const world = getWorldCoords(e);
-    if (isSelecting) {
-        selectionBox.endX = world.x; selectionBox.endY = world.y;
-    } else if (isDrawingRegion && e.buttons === 1) {
-        socket.emit('paintRegion', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE), newRegionId: currentDrawingRegionId });
-    }
+    if (isSelecting) { selectionBox.endX = world.x; selectionBox.endY = world.y;
+    } else if (isDrawingRegion && e.buttons === 1) { socket.emit('paintRegion', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE), newRegionId: currentDrawingRegionId }); }
 });
 
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
-    
     if (e.button === 0 && isSelecting) {
-        isSelecting = false;
-        const world = getWorldCoords(e);
-        selectionBox.endX = world.x; selectionBox.endY = world.y;
+        isSelecting = false; const world = getWorldCoords(e); selectionBox.endX = world.x; selectionBox.endY = world.y;
         
         const minX = Math.min(selectionBox.startX, selectionBox.endX); const maxX = Math.max(selectionBox.startX, selectionBox.endX);
         const minY = Math.min(selectionBox.startY, selectionBox.endY); const maxY = Math.max(selectionBox.startY, selectionBox.endY);
@@ -327,17 +264,9 @@ canvas.addEventListener('mouseup', (e) => {
 
         if (isClick && selectedArmies.length === 0) {
             const cellKey = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
-            if (territory[cellKey] && territory[cellKey].owner === myId) {
-                clickedRegionId = territory[cellKey].regionId;
-                updateRegionPanel();
-            } else {
-                document.getElementById('regionPanel').style.display = 'none';
-                clickedRegionId = null;
-            }
-        } else if (!isClick || selectedArmies.length > 0) {
-            document.getElementById('regionPanel').style.display = 'none';
-            clickedRegionId = null;
-        }
+            if (territory[cellKey] && territory[cellKey].owner === myId) { clickedRegionId = territory[cellKey].regionId; updateRegionPanel();
+            } else { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
+        } else if (!isClick || selectedArmies.length > 0) { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
     }
 });
 
@@ -351,22 +280,17 @@ function updateRegionPanel() {
     document.getElementById('regLevel').innerText = reg.level;
     document.getElementById('regIncome').innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
 
-    // Обновляем кнопку прокачки
     const upgradeCost = reg.cells * reg.level * 50;
     const btn = document.getElementById('upgradeBtn');
     
     if (reg.owner === myId) {
         btn.style.display = 'block';
         if (reg.level >= 10) {
-            btn.innerText = "Максимальный уровень";
-            btn.disabled = true;
-            btn.style.background = '#7f8c8d';
+            btn.innerText = "Макс. уровень"; btn.disabled = true; btn.style.background = '#7f8c8d';
         } else {
             btn.innerText = `Прокачать (${upgradeCost.toLocaleString()} $)`;
             btn.disabled = players[myId].dollars < upgradeCost;
             btn.style.background = btn.disabled ? '#7f8c8d' : '#27ae60';
         }
-    } else {
-        btn.style.display = 'none'; // Нельзя качать чужие регионы
-    }
+    } else { btn.style.display = 'none'; }
 }
