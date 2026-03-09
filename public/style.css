@@ -16,9 +16,13 @@ body, html { margin: 0; padding: 0; background: #0a0a0a; width: 100vw; height: 1
 #controlPanel { position: absolute; top: 60px; left: 10px; width: 250px; background: rgba(20, 20, 20, 0.9); border: 1px solid #444; padding: 15px; z-index: 10; }
 #regionPanel { position: absolute; top: 60px; right: 10px; width: 250px; background: rgba(20, 20, 20, 0.9); border: 1px solid #444; padding: 15px; z-index: 10; }
 
-button { width: 100%; padding: 10px; margin-bottom: 10px; border: none; cursor: pointer; font-weight: bold; border-radius: 2px; }
+button { width: 100%; padding: 10px; margin-bottom: 10px; border: none; cursor: pointer; font-weight: bold; border-radius: 2px; transition: 0.1s; }
 .btn-military { background: #8e44ad; color: white; }
 .btn-military:hover { background: #9b59b6; }
 .btn-civil { background: #2980b9; color: white; }
-.btn-close { background: #555; color: white; }
-.sys-msg { font-size: 12px; color: #f1c40f; text-align: center; }
+.btn-civil:hover { background: #3498db; }
+.btn-disband { background: #555; color: white; }
+.btn-disband:hover { background: #777; }
+.btn-close { background: #444; color: white; }
+.btn-close:hover { background: #555; }
+.sys-msg { font-size: 12px; color: #f1c40f; text-align: center; margin-top: 5px; }
