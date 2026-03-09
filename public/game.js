@@ -3,7 +3,9 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
 const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
-const TILE_SIZE = 15; const KM_PER_TILE = 25000; 
+// --- СИНХРОНИЗАЦИЯ: МЕЛКАЯ КЛЕТКА ---
+const TILE_SIZE = 5; 
+const KM_PER_TILE = TILE_SIZE * TILE_SIZE * 111.32 * 111.32; // км² (приблизительно)
 
 canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 
@@ -11,9 +13,10 @@ let territory = {}; let players = {}; let armies = {}; let regions = {};
 let myId = null; let isPlaying = false; let isSpawned = false;
 
 let camera = { x: 0, y: 0, zoom: 1 };
-let isPanning = false; let lastMouse = { x: 0, y: 0 };
+let isPanning = false; let lastMouse = {x: 0, y: 0};
 
-let selectedArmies = [];
+// Multi-select переменные
+let selectedArmies = []; // Теперь массив!
 let isSelecting = false;
 let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 
@@ -36,11 +39,22 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     isPlaying = true;
 });
 
+// Кнопка развертывания
 document.getElementById('deployBtn').addEventListener('click', () => {
     const amount = document.getElementById('deployAmount').value;
     if (clickedRegionId) {
         socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount });
         showMsg(`Приказ на развертывание ${amount} солдат отдан!`);
+    }
+});
+
+// Кнопка роспуска
+document.getElementById('disbandBtn').addEventListener('click', () => {
+    if (selectedArmies.length > 0) {
+        socket.emit('disbandArmies', selectedArmies);
+        showMsg("Дивизии распущены.");
+        selectedArmies = []; // Сброс выделения
+        drawMap();
     }
 });
 
@@ -60,7 +74,8 @@ socket.on('syncArmies', (a) => { armies = a; drawMap(); });
 
 function updateUI() {
     if (players[myId]) {
-        document.getElementById('myArea').innerText = (players[myId].cells * KM_PER_TILE).toLocaleString();
+        // Умножаем на наш реалистичный масштаб (ТЕРРИТОРИЯ)
+        document.getElementById('myArea').innerText = Math.floor(players[myId].cells * KM_PER_TILE / 1000).toLocaleString(); // км² * 10^3
         document.getElementById('myDollars').innerText = Math.floor(players[myId].dollars).toLocaleString();
         document.getElementById('myIncome').innerText = (players[myId].lastIncome >= 0 ? "+" : "") + Math.floor(players[myId].lastIncome);
         document.getElementById('myIncome').style.color = players[myId].lastIncome >= 0 ? '#27ae60' : '#c0392b';
@@ -80,6 +95,7 @@ function getRegionCenters() {
     return centers;
 }
 
+// --- ОТРИСОВКА (С КАМЕРОЙ) ---
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
@@ -98,30 +114,24 @@ function drawMap() {
     }
     ctx.globalAlpha = 1.0; 
 
-    // 2. Линии границ (Сплошные внешние и Пунктирные внутренние)
+    // 2. Линии границ (ЖЕСТКИЕ, ТОНКИЕ)
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)'; ctx.setLineDash([]);
     for (const key in territory) {
         const cell = territory[key];
         const [x, y] = key.split('_').map(Number);
         const px = x * TILE_SIZE; const py = y * TILE_SIZE;
         
         const drawEdge = (nx, ny, x1, y1, x2, y2) => {
-            const nKey = `${nx}_${ny}`;
-            const nCell = territory[nKey];
+            const nCell = territory[`${nx}_${ny}`];
             if (!nCell || nCell.owner !== cell.owner) {
-                ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)'; ctx.setLineDash([]);
-                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-            } else if (nCell.regionId !== cell.regionId) {
-                ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(50, 50, 50, 0.5)'; ctx.setLineDash([4, 4]);
                 ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
             }
         };
-
         drawEdge(x, y-1, px, py, px+TILE_SIZE, py);
         drawEdge(x, y+1, px, py+TILE_SIZE, px+TILE_SIZE, py+TILE_SIZE);
         drawEdge(x-1, y, px, py, px, py+TILE_SIZE);
         drawEdge(x+1, y, px+TILE_SIZE, py, px+TILE_SIZE, py+TILE_SIZE);
     }
-    ctx.setLineDash([]); 
 
     // 3. Названия регионов
     const regCenters = getRegionCenters();
@@ -136,44 +146,81 @@ function drawMap() {
         }
     }
 
-    // 4. Армии
-    for (const id in armies) {
+    // 4. --- ФИНАЛЬНОЕ УМЕНЬШЕНИЕ: АРМИИ УМЕНЬШЕНЫ В 3 РАЗА (РАДИУС 4) ---
+    // И СТЕКИРОВАНИЕ В СТОПКИ
+    ctx.lineWidth = 1; ctx.strokeStyle = '#fff';
+
+    // Создаем стеки по координатам плитки (например 40x40px)
+    let stacks = {}; 
+    const stackGridSize = 35; // Размер плитки для стекирования
+    for(const id in armies) {
         const army = armies[id];
-        const owner = players[army.owner];
-        if (!owner) continue;
-
-        if (selectedArmies.includes(id)) {
-            ctx.beginPath(); ctx.arc(army.x, army.y, 12, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
-            if (army.targetX !== null) {
-                ctx.beginPath(); ctx.moveTo(army.x, army.y); ctx.lineTo(army.targetX, army.targetY);
-                ctx.strokeStyle = 'rgba(46, 204, 113, 0.7)'; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.setLineDash([]);
-            }
-        }
-
-        ctx.beginPath(); ctx.arc(army.x, army.y, 8, 0, Math.PI * 2);
-        ctx.fillStyle = owner.color; ctx.fill();
-        ctx.lineWidth = 1.5; ctx.strokeStyle = '#fff'; ctx.stroke();
-        
-        ctx.fillStyle = 'white'; ctx.font = '10px Arial'; ctx.textBaseline = 'middle';
-        ctx.fillText(owner.flag, army.x, army.y);
-        
-        ctx.fillStyle = 'white'; ctx.font = 'bold 10px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2.5;
-        const countText = Math.floor(army.count).toString();
-        ctx.strokeText(countText, army.x, army.y + 14);
-        ctx.fillText(countText, army.x, army.y + 14);
+        const gridKey = `${Math.floor(army.x / stackGridSize)}_${Math.floor(army.y / stackGridSize)}`;
+        if(!stacks[gridKey]) stacks[gridKey] = { owner: army.owner, count: 0, flag: players[army.owner]?.flag || '🏳️', armies: [], inCombat: false };
+        stacks[gridKey].count += army.count;
+        stacks[gridKey].armies.push(id);
+        if(army.inCombat) stacks[gridKey].inCombat = true; // Стек в бою
     }
 
-    // 5. Рамка выделения
+    // Отрисовываем стеки
+    for(const key in stacks) {
+        const stack = stacks[key];
+        const owner = players[stack.owner];
+        const [gx, gy] = key.split('_').map(Number);
+        const armyX = gx * stackGridSize + stackGridSize/2;
+        const armyY = gy * stackGridSize + stackGridSize/2;
+
+        // Определяем, выделен ли стек (если хотя бы 1 армия внутри выделена)
+        let stackSelected = stack.armies.some(aId => selectedArmies.includes(aId));
+
+        if (stackSelected) {
+            ctx.beginPath(); ctx.arc(armyX, armyY, 12, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
+        }
+
+        // --- ВИЗУАЛИЗАЦИЯ СТЕКА (КАК В image_6.png) ---
+        // Рисуем стопку флагов (например, до 3-х)
+        const stackSize = Math.min(3, Math.ceil(stack.count / 1000)); // 1 флаг за 1000 солдат
+        
+        for(let i = 0; i < stackSize; i++) {
+            const offsetX = i * 4;
+            const offsetY = i * 4;
+
+            ctx.beginPath(); ctx.arc(armyX + offsetX, armyY - offsetY, 7, 0, Math.PI * 2); // Было 14, стало 7 (Уменьшили в 2 раза)
+            ctx.fillStyle = owner.color; ctx.fill();
+            if(stack.inCombat) { // Красная аура в бою
+                ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(192, 57, 43, 0.8)';
+            } else {
+                ctx.lineWidth = 1; ctx.strokeStyle = '#222';
+            }
+            ctx.stroke();
+
+            ctx.fillStyle = 'white'; ctx.font = '8px Arial'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+            ctx.fillText(stack.flag, armyX + offsetX, armyY - offsetY);
+        }
+
+        // Цифра общей численности под значком
+        ctx.fillStyle = 'white'; ctx.font = 'bold 10px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2.5;
+        const countText = Math.floor(stack.count).toString();
+        ctx.strokeText(countText, armyX, armyY + 14);
+        ctx.fillText(countText, armyX, armyY + 14);
+    }
+
+    // 5. Рамка выделения мыши
     if (isSelecting) {
-        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1;
-        const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
-        ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
+        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)';
+        ctx.strokeStyle = '#2ecc71';
+        ctx.lineWidth = 1;
+        const w = selectionBox.endX - selectionBox.startX;
+        const h = selectionBox.endY - selectionBox.startY;
+        ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h);
+        ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
     }
 
     ctx.restore();
 }
 
+// --- УПРАВЛЕНИЕ КАМЕРОЙ И МУЛЬТИВЫДЕЛЕНИЕМ ---
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const zoomAmount = 0.1; const oldZoom = camera.zoom;
@@ -190,11 +237,15 @@ function getWorldCoords(e) {
     const rect = canvas.getBoundingClientRect();
     const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    return { x: (canvasMouseX - camera.x) / camera.zoom, y: (canvasMouseY - camera.y) / camera.zoom };
+    return {
+        x: (canvasMouseX - camera.x) / camera.zoom,
+        y: (canvasMouseY - camera.y) / camera.zoom
+    };
 }
 
 canvas.addEventListener('mousedown', (e) => { 
     const world = getWorldCoords(e);
+
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
 
     if (e.button === 0) {
@@ -202,24 +253,46 @@ canvas.addEventListener('mousedown', (e) => {
             socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) });
             return;
         }
+        
         if (isDrawingRegion) return;
+
+        // Пытаемся выделить армию кликом (проверяем, кликнули ли мы по значку)
+        for (const id in armies) {
+            const army = armies[id];
+            if (army.owner === myId) {
+                const dist = Math.sqrt(Math.pow(army.x - world.x, 2) + Math.pow(army.y - world.y, 2));
+                if (dist <= 15) { // Радиус клика
+                    selectedArmies = [id]; // Сброс старого выделения, оставляем 1
+                    document.getElementById('disbandBtn').style.display = 'block';
+                    drawMap();
+                    return; 
+                }
+            }
+        }
+
+        // Если не кликнули по армии, начинаем выделение рамкой
         isSelecting = true;
         selectionBox.startX = world.x; selectionBox.startY = world.y;
         selectionBox.endX = world.x; selectionBox.endY = world.y;
     }
     
-    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) {
+    // ПРАВЫЙ КЛИК (Движение группы)
+    else if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) {
         socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y });
     }
 });
 
 canvas.addEventListener('mousemove', (e) => { 
     if (isPanning) {
-        camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y);
+        camera.x += (e.clientX - lastMouse.x);
+        camera.y += (e.clientY - lastMouse.y);
         lastMouse = {x: e.clientX, y: e.clientY};
-        drawMap(); return;
+        drawMap();
+        return;
     }
+    
     const world = getWorldCoords(e);
+    
     if (isSelecting) {
         selectionBox.endX = world.x; selectionBox.endY = world.y;
         drawMap();
@@ -230,27 +303,34 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
+    
     if (e.button === 0 && isSelecting) {
-        isSelecting = false; selectedArmies = [];
+        isSelecting = false;
+        
+        // Нормализуем координаты рамки
         const minX = Math.min(selectionBox.startX, selectionBox.endX);
         const maxX = Math.max(selectionBox.startX, selectionBox.endX);
         const minY = Math.min(selectionBox.startY, selectionBox.endY);
         const maxY = Math.max(selectionBox.startY, selectionBox.endY);
-        const isClick = (maxX - minX < 5 && maxY - minY < 5);
 
+        // Проверяем, кто попал в рамку
+        selectedArmies = []; // Сброс старого выделения
         for (const id in armies) {
             const a = armies[id];
             if (a.owner === myId) {
-                if (isClick && Math.hypot(a.x - minX, a.y - minY) <= 12) {
-                    selectedArmies.push(id); break; 
-                } else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) {
+                if (a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) {
                     selectedArmies.push(id);
                 }
             }
         }
-        if (selectedArmies.length === 0 && isClick) {
-            const cellKey = `${Math.floor(minX/TILE_SIZE)}_${Math.floor(minY/TILE_SIZE)}`;
-            if (territory[cellKey] && territory[cellKey].owner === myId) {
+
+        // Показываем кнопку роспуска только если выделили кого-то
+        document.getElementById('disbandBtn').style.display = selectedArmies.length > 0 ? 'block' : 'none';
+
+        // Клик ЛКМ по территории (открытие региона)
+        if (selectedArmies.length === 0 && Math.abs(selectionBox.startX - selectionBox.endX) < 5 && Math.abs(selectionBox.startY - selectionBox.endY) < 5) {
+            const cellKey = `${Math.floor(worldCoords.x/TILE_SIZE)}_${Math.floor(worldCoords.y/TILE_SIZE)}`;
+            if (territory[cellKey]) {
                 clickedRegionId = territory[cellKey].regionId;
                 updateRegionPanel();
             } else {
@@ -258,6 +338,7 @@ canvas.addEventListener('mouseup', (e) => {
                 clickedRegionId = null;
             }
         }
+        
         drawMap();
     }
 });
@@ -265,8 +346,10 @@ canvas.addEventListener('mouseup', (e) => {
 function updateRegionPanel() {
     if (!clickedRegionId || !regions[clickedRegionId]) return;
     const reg = regions[clickedRegionId];
+    const ownerName = players[reg.owner] ? players[reg.owner].name : "Неизвестно";
+    
     document.getElementById('regionPanel').style.display = 'block';
     document.getElementById('regName').innerText = reg.name;
-    document.getElementById('regOwner').innerText = players[reg.owner] ? players[reg.owner].name : "Неизвестно";
-    document.getElementById('regIncome').innerText = (reg.cells * 15).toLocaleString(); 
+    document.getElementById('regOwner').innerText = ownerName;
+    document.getElementById('regIncome').innerText = (reg.cells * 1.5).toLocaleString(); // ВВП региона (зависит от мелких клеток)
 }
