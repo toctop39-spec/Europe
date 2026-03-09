@@ -28,15 +28,47 @@ const bgMap = new Image();
 bgMap.src = 'Map.png'; 
 bgMap.onload = () => { requestAnimationFrame(gameLoop); };
 
-// ЛОББИ И ПОДКЛЮЧЕНИЕ
+// --- ЛОББИ И ЗАГРУЗКА ФЛАГА ---
+let base64Flag = null;
+const flagCache = {}; // Кэш для отрисовки картинок флагов
+
+function getFlagImage(cId, base64Str) {
+    if (!flagCache[cId]) {
+        const img = new Image();
+        img.src = base64Str;
+        flagCache[cId] = img;
+    }
+    return flagCache[cId];
+}
+
+// Сжатие картинки пользователя
+document.getElementById('countryFlagFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = 64; tempCanvas.height = 64; // Сжимаем до 64x64
+                const tCtx = tempCanvas.getContext('2d');
+                tCtx.drawImage(img, 0, 0, 64, 64);
+                base64Flag = tempCanvas.toDataURL('image/png');
+            };
+            img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+});
+
 socket.on('initLobby', (cList) => {
     countries = cList;
-    if (isPlaying) return; // Если мы уже в игре, не трогаем меню
+    if (isPlaying) return; 
     const select = document.getElementById('countrySelect');
     select.innerHTML = '<option value="new">-- Основать новую страну --</option>';
     for (let cId in countries) {
         if (!countries[cId].online) {
-            select.innerHTML += `<option value="${cId}">${countries[cId].flag} ${countries[cId].name} (Заброшена)</option>`;
+            select.innerHTML += `<option value="${cId}">${countries[cId].name} (Заброшена)</option>`;
         }
     }
 });
@@ -49,9 +81,16 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     const selectVal = document.getElementById('countrySelect').value;
     if (selectVal === 'new') {
         const name = document.getElementById('countryName').value || 'Империя';
-        const flag = document.getElementById('countryFlag').value || '🏳️';
         const color = document.getElementById('countryColor').value;
-        socket.emit('joinGame', { isNew: true, name, color, flag });
+        
+        // Если флаг не загрузили, генерируем заглушку (цветной квадрат)
+        if (!base64Flag) {
+            const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64;
+            const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64);
+            base64Flag = tCnv.toDataURL();
+        }
+        
+        socket.emit('joinGame', { isNew: true, name, color, flag: base64Flag });
     } else {
         socket.emit('joinGame', { isNew: false, countryId: selectVal });
     }
@@ -63,7 +102,7 @@ socket.on('joinSuccess', (cId) => {
     document.getElementById('topBar').style.display = 'flex';
     document.getElementById('controlPanel').style.display = 'block';
     document.getElementById('myName').innerText = countries[myId].name; 
-    document.getElementById('myFlagUI').innerText = countries[myId].flag;
+    document.getElementById('myFlagUI').src = countries[myId].flag;
     isSpawned = countries[myId].isSpawned;
     isPlaying = true;
 });
@@ -198,35 +237,53 @@ function drawMap() {
         }
     }
 
-    // --- КРОШЕЧНЫЕ АРМИИ ---
+    // --- ДИНАМИЧЕСКИЕ АРМИИ И КАРТИНКА В ЦЕНТРЕ ---
+    // Размер армии на экране будет фиксированным: 8 пикселей радиус
+    const radius = 8 / camera.zoom; 
+
     for(const id in visualArmies) {
         const army = visualArmies[id]; const owner = countries[army.owner];
         if (!owner) continue;
 
         if (selectedArmies.includes(id)) {
-            // Ауру тоже уменьшили (радиус 4)
-            ctx.beginPath(); ctx.arc(army.x, army.y, 4, 0, Math.PI * 2); ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
+            ctx.beginPath(); ctx.arc(army.x, army.y, radius * 1.5, 0, Math.PI * 2); 
+            ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
             if (army.targetX !== null) {
                 ctx.beginPath(); ctx.moveTo(army.x, army.y); ctx.lineTo(army.targetX, army.targetY);
-                ctx.strokeStyle = 'rgba(46, 204, 113, 0.4)'; ctx.setLineDash([2, 2]); ctx.stroke(); ctx.setLineDash([]);
+                ctx.strokeStyle = 'rgba(46, 204, 113, 0.4)'; 
+                ctx.lineWidth = 2 / camera.zoom; 
+                ctx.setLineDash([4/camera.zoom, 4/camera.zoom]); ctx.stroke(); ctx.setLineDash([]);
             }
         }
 
-        // Само тело армии теперь радиусом 2 (было 6)
-        ctx.beginPath(); ctx.arc(army.x, army.y, 2, 0, Math.PI * 2); 
-        ctx.fillStyle = owner.color; ctx.fill();
+        // Рисуем картинку флага внутри круга
+        ctx.save();
+        ctx.beginPath(); ctx.arc(army.x, army.y, radius, 0, Math.PI * 2); ctx.closePath();
+        ctx.clip(); // Обрезаем всё, что выходит за круг
         
-        if(army.inCombat) { ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(192, 57, 43, 1)'; } else { ctx.lineWidth = 0.5; ctx.strokeStyle = '#fff'; }
-        ctx.stroke();
+        const flagImg = getFlagImage(army.owner, owner.flag);
+        if (flagImg && flagImg.complete) {
+            ctx.drawImage(flagImg, army.x - radius, army.y - radius, radius * 2, radius * 2);
+        } else {
+            ctx.fillStyle = owner.color; ctx.fill(); // Заглушка, если картинка не загрузилась
+        }
+        ctx.restore();
 
-        // Флаг рисуем ЧУТЬ ВЫШЕ кружка
-        ctx.fillStyle = 'white'; ctx.font = '7px Arial'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; 
-        ctx.fillText(owner.flag, army.x, army.y - 5);
+        // Обводка вокруг армии (Красная если в бою)
+        ctx.beginPath(); ctx.arc(army.x, army.y, radius, 0, Math.PI * 2);
+        ctx.lineWidth = 1.5 / camera.zoom;
+        ctx.strokeStyle = army.inCombat ? 'rgba(192, 57, 43, 1)' : owner.color;
+        ctx.stroke();
         
-        // Цифры рисуем ЧУТЬ НИЖЕ кружка
-        ctx.fillStyle = 'white'; ctx.font = 'bold 7px Arial'; ctx.strokeStyle = 'black'; ctx.lineWidth = 1.5;
+        // Цифры численности (Размер шрифта тоже зависит от зума)
+        ctx.fillStyle = 'white'; 
+        ctx.font = `bold ${9 / camera.zoom}px Arial`; 
+        ctx.strokeStyle = 'black'; 
+        ctx.lineWidth = 2 / camera.zoom;
         const countText = Math.floor(army.count).toString();
-        ctx.strokeText(countText, army.x, army.y + 5); ctx.fillText(countText, army.x, army.y + 5);
+        
+        ctx.strokeText(countText, army.x, army.y + radius + (8 / camera.zoom)); 
+        ctx.fillText(countText, army.x, army.y + radius + (8 / camera.zoom));
     }
 
     if (isSelecting) {
@@ -242,7 +299,7 @@ function drawMap() {
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const zoomAmount = 0.1; const oldZoom = camera.zoom;
-    camera.zoom = e.deltaY > 0 ? Math.max(0.5, camera.zoom - zoomAmount) : Math.min(4, camera.zoom + zoomAmount);
+    camera.zoom = e.deltaY > 0 ? Math.max(0.5, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount);
     const rect = canvas.getBoundingClientRect();
     const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
@@ -286,11 +343,12 @@ canvas.addEventListener('mouseup', (e) => {
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
         selectedArmies = [];
 
+        const hitRadius = (8 / camera.zoom) + 2; // Динамический радиус клика!
+
         for (const id in visualArmies) {
             const a = visualArmies[id];
             if (a.owner === myId) {
-                // Радиус клика уменьшен до 6, так как армии стали крошечными
-                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= 6) { selectedArmies.push(id); } 
+                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= hitRadius) { selectedArmies.push(id); } 
                 else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) { selectedArmies.push(id); }
             }
         }
