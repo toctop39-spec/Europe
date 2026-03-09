@@ -253,60 +253,76 @@ setInterval(() => {
 }, 1000 / 30);
 
 
-// --- АЛГОРИТМ КОТЛОВ (ОКРУЖЕНИЯ) - Каждые 2 секунды ---
+// --- АЛГОРИТМ КОТЛОВ (ОКРУЖЕНИЯ) ВЕРСИЯ БЕЗ ЛАГОВ ---
+// Предварительно выделяем память (никакого мусора для сборщика GC)
+const gridW = Math.ceil(1920 / TILE_SIZE);
+const gridH = Math.ceil(1080 / TILE_SIZE);
+const totalCells = gridW * gridH;
+
+let visited = new Uint8Array(totalCells);
+let queueX = new Int32Array(totalCells);
+let queueY = new Int32Array(totalCells);
+
 setInterval(() => {
-    const gridW = Math.ceil(1920 / TILE_SIZE);
-    const gridH = Math.ceil(1080 / TILE_SIZE);
-    let visited = new Set();
+    visited.fill(0); // Очищаем массив за 1 операцию
     let changed = false;
 
-    // Ищем пустоты на карте
     for (let y = 0; y < gridH; y++) {
         for (let x = 0; x < gridW; x++) {
-            const key = `${x}_${y}`;
+            let idx = y * gridW + x;
+            const cellKey = `${x}_${y}`;
             
             // Если клетка пустая и мы ее еще не проверяли
-            if (!territory[key] && !visited.has(key)) {
-                let queue = [ {x, y} ];
-                let component = []; // Все пустые клетки в этой яме
+            if (!territory[cellKey] && visited[idx] === 0) {
+                let head = 0, tail = 0;
+                queueX[tail] = x; queueY[tail] = y; tail++;
+                visited[idx] = 1;
+                
+                let component = []; 
                 let touchesEdge = false;
                 let surroundingOwners = new Set();
                 
-                visited.add(key);
-                let head = 0;
+                // Сверхбыстрый Flood Fill без создания новых объектов
+                while(head < tail) {
+                    let currX = queueX[head];
+                    let currY = queueY[head];
+                    head++;
+                    
+                    component.push(`${currX}_${currY}`);
 
-                // Заливка (Flood Fill)
-                while(head < queue.length) {
-                    let curr = queue[head++];
-                    component.push(curr);
-
-                    // Если пустота касается края карты - это не котел, это океан/край
-                    if (curr.x <= 0 || curr.x >= gridW-1 || curr.y <= 0 || curr.y >= gridH-1) {
+                    // Проверка на край карты
+                    if (currX <= 0 || currX >= gridW-1 || currY <= 0 || currY >= gridH-1) {
                         touchesEdge = true;
                     }
 
-                    const neighbors = [
-                        {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
-                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
-                    ];
-
-                    for(let n of neighbors) {
-                        if(n.x >= 0 && n.x < gridW && n.y >= 0 && n.y < gridH) {
-                            let nKey = `${n.x}_${n.y}`;
+                    // 4 соседа: вправо, влево, вниз, вверх
+                    const dx = [1, -1, 0, 0];
+                    const dy = [0, 0, 1, -1];
+                    
+                    for(let i = 0; i < 4; i++) {
+                        let nx = currX + dx[i];
+                        let ny = currY + dy[i];
+                        
+                        if(nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
+                            let nKey = `${nx}_${ny}`;
                             let t = territory[nKey];
                             
                             if (t) {
-                                // Если уперлись в чью-то территорию, запоминаем владельца
+                                // Если уперлись в чью-то границу
                                 surroundingOwners.add(t.owner);
-                            } else if (!visited.has(nKey)) {
-                                visited.add(nKey);
-                                queue.push(n);
+                            } else {
+                                // Если дальше пустота
+                                let nIdx = ny * gridW + nx;
+                                if (visited[nIdx] === 0) {
+                                    visited[nIdx] = 1;
+                                    queueX[tail] = nx; queueY[tail] = ny; tail++;
+                                }
                             }
                         }
                     }
                 }
 
-                // ПРОВЕРКА НА КОТЕЛ: Не касается края карты И окружена только ОДНИМ игроком
+                // ПРОВЕРКА НА КОТЕЛ: Не касается края И окружена только одним игроком
                 if (!touchesEdge && surroundingOwners.size === 1) {
                     let winnerId = Array.from(surroundingOwners)[0];
                     let regId = `reg_${winnerId}_cap`;
@@ -315,10 +331,10 @@ setInterval(() => {
                         regions[regId] = { name: "Столичный", owner: winnerId, cells: 0, level: 1 };
                     }
                     
-                    // Закрашиваем всю пустоту этому игроку
-                    for (let c of component) {
-                        territory[`${c.x}_${c.y}`] = { owner: winnerId, regionId: regId };
-                        players[winnerId].cells++;
+                    // Закрашиваем котел победителю
+                    for (let cKey of component) {
+                        territory[cKey] = { owner: winnerId, regionId: regId };
+                        if (players[winnerId]) players[winnerId].cells++;
                         regions[regId].cells++;
                     }
                     changed = true;
@@ -327,6 +343,7 @@ setInterval(() => {
         }
     }
     
+    // Отправляем изменения клиентам только если котел захлопнулся
     if (changed) {
         io.emit('syncTerritory', { territory, regions });
         io.emit('updateResources', players);
