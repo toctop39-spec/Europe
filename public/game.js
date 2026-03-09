@@ -112,39 +112,46 @@ function drawMap() {
     for (const key in territory) {
         const owner = players[territory[key].owner];
         if (owner) {
-            const [x, y] = key.split('_').map(Number);
+            const [ix, iy] = key.split('_').map(Number);
             ctx.fillStyle = owner.color;
-            ctx.fillRect(x * TILE_SIZE - 0.5, y * TILE_SIZE - 0.5, TILE_SIZE + 1, TILE_SIZE + 1);
+            ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
     }
-    ctx.globalAlpha = 1.0; 
 
-    // 2. Линии границ (ИСПРАВЛЕНЫ: Внешние жесткие, внутренние пунктирные)
+    // 2. ИДЕАЛЬНЫЕ ГРАНИЦЫ ЧЕРЕЗ fillRect (Алгоритм пользователя)
+    ctx.globalAlpha = 1.0;
+    const LINE_W = 1.5; // Толщина госграницы
+    const step = TILE_SIZE;
+
+    const getCellOwner = (nx, ny) => {
+        const nCell = territory[`${nx}_${ny}`];
+        return nCell ? nCell.owner : null;
+    };
+    
+    const getCellRegion = (nx, ny) => {
+        const nCell = territory[`${nx}_${ny}`];
+        return nCell ? nCell.regionId : null;
+    };
+
     for (const key in territory) {
         const cell = territory[key];
-        const [x, y] = key.split('_').map(Number);
-        const px = x * TILE_SIZE; const py = y * TILE_SIZE;
-        
-        const drawEdge = (nx, ny, x1, y1, x2, y2) => {
-            const nCell = territory[`${nx}_${ny}`];
-            if (!nCell || nCell.owner !== cell.owner) {
-                // Внешняя граница государства (черная сплошная)
-                ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)'; ctx.setLineDash([]);
-                ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-            } else if (nCell.regionId !== cell.regionId) {
-                // Внутренняя граница региона (серая пунктирная) - рисуем 1 раз
-                if (nx >= x && ny >= y) {
-                    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(150, 150, 150, 0.6)'; ctx.setLineDash([2, 2]);
-                    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-                }
-            }
-        };
-        drawEdge(x, y-1, px, py, px+TILE_SIZE, py);
-        drawEdge(x, y+1, px, py+TILE_SIZE, px+TILE_SIZE, py+TILE_SIZE);
-        drawEdge(x-1, y, px, py, px, py+TILE_SIZE);
-        drawEdge(x+1, y, px+TILE_SIZE, py, px+TILE_SIZE, py+TILE_SIZE);
+        const [ix, iy] = key.split('_').map(Number);
+        const x = ix * step;
+        const y = iy * step;
+        const owner = cell.owner;
+
+        // Рисуем Внешнюю Государственную границу (Почти черная)
+        ctx.fillStyle = 'rgba(20, 20, 20, 0.9)'; 
+        if (getCellOwner(ix, iy - 1) !== owner) ctx.fillRect(x, y, step, LINE_W); // Верх
+        if (getCellOwner(ix, iy + 1) !== owner) ctx.fillRect(x, y + step - LINE_W, step, LINE_W); // Низ
+        if (getCellOwner(ix - 1, iy) !== owner) ctx.fillRect(x, y, LINE_W, step); // Лево
+        if (getCellOwner(ix + 1, iy) !== owner) ctx.fillRect(x + step - LINE_W, y, LINE_W, step); // Право
+
+        // Рисуем Внутреннюю границу регионов (Светло-серая, тоньше)
+        ctx.fillStyle = 'rgba(100, 100, 100, 0.5)';
+        if (getCellOwner(ix, iy - 1) === owner && getCellRegion(ix, iy - 1) !== cell.regionId) ctx.fillRect(x, y, step, 1);
+        if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
-    ctx.setLineDash([]); // Возвращаем сплошную линию для остальных элементов
 
     // 3. Названия регионов
     const regCenters = getRegionCenters();
@@ -291,7 +298,6 @@ canvas.addEventListener('mousemove', (e) => {
     }
 });
 
-// ИСПРАВЛЕННАЯ ЛОГИКА КЛИКОВ (Выделение армий vs Открытие региона)
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
     
@@ -308,25 +314,20 @@ canvas.addEventListener('mouseup', (e) => {
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
         selectedArmies = [];
 
-        // Выделение армий
         for (const id in armies) {
             const a = armies[id];
             if (a.owner === myId) {
-                // Если это клик - ищем армии рядом с курсором
                 if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= 20) { 
                     selectedArmies.push(id);
                 } 
-                // Если это рамка - ищем армии внутри рамки
                 else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) {
                     selectedArmies.push(id);
                 }
             }
         }
 
-        // Показываем или прячем кнопку роспуска
         document.getElementById('disbandBtn').style.display = selectedArmies.length > 0 ? 'block' : 'none';
 
-        // Логика региона: Открываем панель ТОЛЬКО если это был клик и мы НЕ попали по армии
         if (isClick && selectedArmies.length === 0) {
             const cellKey = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
             if (territory[cellKey] && territory[cellKey].owner === myId) {
@@ -337,7 +338,6 @@ canvas.addEventListener('mouseup', (e) => {
                 clickedRegionId = null;
             }
         } else if (!isClick || selectedArmies.length > 0) {
-            // Если выделили армию или потянули рамку — закрываем панель региона, чтобы не мешала
             document.getElementById('regionPanel').style.display = 'none';
             clickedRegionId = null;
         }
