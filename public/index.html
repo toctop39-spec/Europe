@@ -12,7 +12,7 @@
             <h2>Основать государство</h2>
             <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
             <br><br>
-            <input type="text" id="countryFlag" placeholder="Флаг (напр. 🦅)" maxlength="2" class="flag-input">
+            <input type="text" id="countryFlag" placeholder="Флаг (эмодзи, напр. 🇺🇦)" maxlength="2" class="flag-input">
             <br><br>
             <label>Цвет на карте:</label>
             <input type="color" id="countryColor" value="#2b5e8a">
@@ -31,6 +31,7 @@
     <div id="controlPanel" style="display: none;">
         <h3>Управление</h3>
         <button id="drawRegionBtn" class="btn-civil">Выделить новый регион</button>
+        <button id="disbandBtn" class="btn-disband" style="display: none;">Распустить армию</button>
         <p id="systemMsg" class="sys-msg">Ожидание приказа...</p>
     </div>
 
