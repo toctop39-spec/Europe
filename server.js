@@ -43,7 +43,8 @@ io.on('connection', (socket) => {
 
         player.isSpawned = true;
         const startRegionId = `reg_${socket.id}_cap`;
-        regions[startRegionId] = { name: "Столичный регион", owner: socket.id, cells: 0 };
+        // Добавили УРОВЕНЬ региона (level)
+        regions[startRegionId] = { name: "Столичный регион", owner: socket.id, cells: 0, level: 1 };
 
         for(let dx = -6; dx <= 6; dx++) {
             for(let dy = -6; dy <= 6; dy++) {
@@ -65,12 +66,25 @@ io.on('connection', (socket) => {
             if (regions[cell.regionId]) regions[cell.regionId].cells--;
             cell.regionId = data.newRegionId;
             if (!regions[data.newRegionId]) {
-                regions[data.newRegionId] = { name: `Регион ${Object.keys(regions).length + 1}`, owner: socket.id, cells: 0 };
+                regions[data.newRegionId] = { name: `Регион ${Object.keys(regions).length + 1}`, owner: socket.id, cells: 0, level: 1 };
             }
             regions[data.newRegionId].cells++;
-            
-            // ИСПРАВЛЕНИЕ СЕТИ: Отправляем только ОДНУ измененную клетку, а не всю карту!
             io.emit('cellUpdate', { key: cellKey, cell: cell, regions: regions });
+        }
+    });
+
+    // ПРОКАЧКА РЕГИОНА
+    socket.on('upgradeRegion', (regionId) => {
+        const player = players[socket.id];
+        const region = regions[regionId];
+        if (player && region && region.owner === socket.id && region.level < 10) {
+            const cost = region.cells * region.level * 50; // Чем больше клеток и уровень - тем дороже
+            if (player.dollars >= cost) {
+                player.dollars -= cost;
+                region.level++;
+                io.emit('syncTerritory', { territory, regions });
+                io.emit('updateResources', players);
+            }
         }
     });
 
@@ -84,10 +98,9 @@ io.on('connection', (socket) => {
             const armyId = Math.random().toString(36).substr(2, 9);
             armies[armyId] = {
                 id: armyId, owner: socket.id,
-                x: center.x, y: center.y,
+                x: center.x + (Math.random()*10 - 5), y: center.y + (Math.random()*10 - 5), // Легкий спавн-разброс
                 targetX: null, targetY: null,
-                count: amount, 
-                speed: 0.25 
+                count: amount, speed: 0.25 
             };
             io.emit('syncArmies', armies);
             io.emit('updateResources', players);
@@ -102,10 +115,9 @@ io.on('connection', (socket) => {
     socket.on('moveArmies', (data) => {
         data.armyIds.forEach((id, index) => {
             if (armies[id] && armies[id].owner === socket.id) {
-                const offsetX = (index % 3) * 3 - 3; 
-                const offsetY = Math.floor(index / 3) * 3 - 3;
-                armies[id].targetX = data.targetX + offsetX;
-                armies[id].targetY = data.targetY + offsetY;
+                // Больше никаких сеток! Просто направляем всех в одну точку, физика сама их растолкает
+                armies[id].targetX = data.targetX;
+                armies[id].targetY = data.targetY;
             }
         });
     });
@@ -113,6 +125,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete players[socket.id]; });
 });
 
+// Экономика (Тик 1 сек)
 setInterval(() => {
     let changed = false;
     for (const id in players) {
@@ -120,11 +133,18 @@ setInterval(() => {
             players[id].cap = 5000 + (players[id].cells * 50); 
             
             let maintenance = 0;
-            for(const aId in armies) {
-                if(armies[aId].owner === id) maintenance += armies[aId].count * 0.1;
+            for(const aId in armies) { if(armies[aId].owner === id) maintenance += armies[aId].count * 0.1; }
+            
+            // Расчет дохода с учетом УРОВНЕЙ регионов
+            let regionsIncome = 0;
+            for (const rId in regions) {
+                if (regions[rId].owner === id) {
+                    // Базовый доход (1.5) умножается на уровень региона
+                    regionsIncome += regions[rId].cells * 1.5 * regions[rId].level;
+                }
             }
             
-            const income = 100 + (players[id].cells * 1.5) - maintenance;
+            const income = 100 + regionsIncome - maintenance;
             players[id].dollars += income; 
             players[id].lastIncome = income; 
             
@@ -138,27 +158,50 @@ setInterval(() => {
     if (changed) io.emit('updateResources', players);
 }, 1000);
 
-// Движение и захват (30 FPS на сервере)
+// ФИЗИКА И ДВИЖЕНИЕ (30 FPS)
 setInterval(() => {
     let stateChanged = false;
-
+    const armyKeys = Object.keys(armies);
     for(const id in armies) armies[id].inCombat = false;
 
-    for (const id in armies) {
-        let a = armies[id];
+    // 1. КОЛЛИЗИИ (ОТТАЛКИВАНИЕ И БОЙ)
+    for (let i = 0; i < armyKeys.length; i++) {
+        for (let j = i + 1; j < armyKeys.length; j++) {
+            let a = armies[armyKeys[i]];
+            let b = armies[armyKeys[j]];
+            
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let dist = Math.hypot(dx, dy);
+            
+            const COLLISION_RADIUS = 12; // Радиус физического тела армии
 
-        for(const enemyId in armies) {
-            if(enemyId !== id && armies[enemyId].owner !== a.owner) {
-                let e = armies[enemyId];
-                if(Math.hypot(e.x - a.x, e.y - a.y) < 18) { 
+            if (dist < COLLISION_RADIUS) {
+                if (a.owner !== b.owner) {
+                    // Враги: Вступают в бой и останавливаются
                     a.targetX = null; a.targetY = null;
-                    e.targetX = null; e.targetY = null;
-                    a.inCombat = true; e.inCombat = true;
-                    a.combatantId = enemyId;
+                    b.targetX = null; b.targetY = null;
+                    a.inCombat = true; b.inCombat = true;
+                    a.combatantId = b.id; b.combatantId = a.id;
+                } else {
+                    // Свои: ОТТАЛКИВАЮТСЯ друг от друга (Мягкая физика)
+                    if (dist === 0) { dx = Math.random()-0.5; dy = Math.random()-0.5; dist = 1; }
+                    let overlap = COLLISION_RADIUS - dist;
+                    let pushFactor = 0.2; // Сила выталкивания
+                    let pushX = (dx / dist) * overlap * pushFactor;
+                    let pushY = (dy / dist) * overlap * pushFactor;
+                    
+                    a.x += pushX; a.y += pushY;
+                    b.x -= pushX; b.y -= pushY;
+                    stateChanged = true;
                 }
             }
         }
+    }
 
+    // 2. ДВИЖЕНИЕ
+    for (const id in armies) {
+        let a = armies[id];
         if (!a.inCombat && a.targetX !== null && a.targetY !== null) {
             let dx = a.targetX - a.x;
             let dy = a.targetY - a.y;
@@ -169,13 +212,11 @@ setInterval(() => {
                 a.y += (dy / distance) * a.speed;
                 stateChanged = true;
             } else {
-                a.x = a.targetX; 
-                a.y = a.targetY;
-                a.targetX = null; 
-                a.targetY = null;
+                a.targetX = null; a.targetY = null;
                 stateChanged = true;
             }
 
+            // Захват под ногами
             const cellKey = `${Math.floor(a.x / TILE_SIZE)}_${Math.floor(a.y / TILE_SIZE)}`;
             const cell = territory[cellKey];
             if (!cell || cell.owner !== a.owner) {
@@ -188,29 +229,108 @@ setInterval(() => {
                 territory[cellKey] = { owner: a.owner, regionId: newRegionId };
                 if (players[a.owner]) players[a.owner].cells++;
                 if (regions[newRegionId]) regions[newRegionId].cells++;
-                
-                // ИСПРАВЛЕНИЕ СЕТИ: Отправляем только измененную клетку!
                 io.emit('cellUpdate', { key: cellKey, cell: territory[cellKey], regions: regions, players: players });
                 stateChanged = true;
             }
         }
     }
     
+    // 3. УРОН В БОЮ
     for(const id in armies) {
         let a = armies[id];
-        if(a.inCombat) {
+        if(a.inCombat && armies[a.combatantId]) {
             let e = armies[a.combatantId];
-            if(e) {
-                a.count -= e.count * 0.005; 
-                e.count -= a.count * 0.005;
-                stateChanged = true;
-            }
+            a.count -= e.count * 0.005; 
+            e.count -= a.count * 0.005;
+            stateChanged = true;
         }
     }
 
-    for(const id in armies) { if(armies[id].count <= 0) { delete armies[id]; continue; } }
+    // Удаление мертвых
+    for(const id in armies) { if(armies[id].count <= 0) delete armies[id]; }
     
     if (stateChanged) io.emit('syncArmies', armies);
 }, 1000 / 30);
+
+
+// --- АЛГОРИТМ КОТЛОВ (ОКРУЖЕНИЯ) - Каждые 2 секунды ---
+setInterval(() => {
+    const gridW = Math.ceil(1920 / TILE_SIZE);
+    const gridH = Math.ceil(1080 / TILE_SIZE);
+    let visited = new Set();
+    let changed = false;
+
+    // Ищем пустоты на карте
+    for (let y = 0; y < gridH; y++) {
+        for (let x = 0; x < gridW; x++) {
+            const key = `${x}_${y}`;
+            
+            // Если клетка пустая и мы ее еще не проверяли
+            if (!territory[key] && !visited.has(key)) {
+                let queue = [ {x, y} ];
+                let component = []; // Все пустые клетки в этой яме
+                let touchesEdge = false;
+                let surroundingOwners = new Set();
+                
+                visited.add(key);
+                let head = 0;
+
+                // Заливка (Flood Fill)
+                while(head < queue.length) {
+                    let curr = queue[head++];
+                    component.push(curr);
+
+                    // Если пустота касается края карты - это не котел, это океан/край
+                    if (curr.x <= 0 || curr.x >= gridW-1 || curr.y <= 0 || curr.y >= gridH-1) {
+                        touchesEdge = true;
+                    }
+
+                    const neighbors = [
+                        {x: curr.x+1, y: curr.y}, {x: curr.x-1, y: curr.y},
+                        {x: curr.x, y: curr.y+1}, {x: curr.x, y: curr.y-1}
+                    ];
+
+                    for(let n of neighbors) {
+                        if(n.x >= 0 && n.x < gridW && n.y >= 0 && n.y < gridH) {
+                            let nKey = `${n.x}_${n.y}`;
+                            let t = territory[nKey];
+                            
+                            if (t) {
+                                // Если уперлись в чью-то территорию, запоминаем владельца
+                                surroundingOwners.add(t.owner);
+                            } else if (!visited.has(nKey)) {
+                                visited.add(nKey);
+                                queue.push(n);
+                            }
+                        }
+                    }
+                }
+
+                // ПРОВЕРКА НА КОТЕЛ: Не касается края карты И окружена только ОДНИМ игроком
+                if (!touchesEdge && surroundingOwners.size === 1) {
+                    let winnerId = Array.from(surroundingOwners)[0];
+                    let regId = `reg_${winnerId}_cap`;
+                    
+                    if (!regions[regId]) {
+                        regions[regId] = { name: "Столичный", owner: winnerId, cells: 0, level: 1 };
+                    }
+                    
+                    // Закрашиваем всю пустоту этому игроку
+                    for (let c of component) {
+                        territory[`${c.x}_${c.y}`] = { owner: winnerId, regionId: regId };
+                        players[winnerId].cells++;
+                        regions[regId].cells++;
+                    }
+                    changed = true;
+                }
+            }
+        }
+    }
+    
+    if (changed) {
+        io.emit('syncTerritory', { territory, regions });
+        io.emit('updateResources', players);
+    }
+}, 2000);
 
 server.listen(process.env.PORT || 3000, () => console.log('Сервер работает'));
