@@ -59,7 +59,8 @@ io.on('connection', (socket) => {
     });
 
     socket.on('paintRegion', (data) => {
-        const cell = territory[`${data.x}_${data.y}`];
+        const cellKey = `${data.x}_${data.y}`;
+        const cell = territory[cellKey];
         if (cell && cell.owner === socket.id) {
             if (regions[cell.regionId]) regions[cell.regionId].cells--;
             cell.regionId = data.newRegionId;
@@ -67,7 +68,9 @@ io.on('connection', (socket) => {
                 regions[data.newRegionId] = { name: `Регион ${Object.keys(regions).length + 1}`, owner: socket.id, cells: 0 };
             }
             regions[data.newRegionId].cells++;
-            io.emit('syncTerritory', { territory, regions });
+            
+            // ИСПРАВЛЕНИЕ СЕТИ: Отправляем только ОДНУ измененную клетку, а не всю карту!
+            io.emit('cellUpdate', { key: cellKey, cell: cell, regions: regions });
         }
     });
 
@@ -92,16 +95,11 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disbandArmies', (armyIds) => {
-        armyIds.forEach(id => {
-            if (armies[id] && armies[id].owner === socket.id) {
-                delete armies[id];
-            }
-        });
+        armyIds.forEach(id => { if (armies[id] && armies[id].owner === socket.id) delete armies[id]; });
         io.emit('syncArmies', armies);
     });
 
     socket.on('moveArmies', (data) => {
-        // ИСПРАВЛЕНИЕ: Аккуратное выстраивание армий вокруг точки без разброса и телепортаций
         data.armyIds.forEach((id, index) => {
             if (armies[id] && armies[id].owner === socket.id) {
                 const offsetX = (index % 3) * 3 - 3; 
@@ -140,6 +138,7 @@ setInterval(() => {
     if (changed) io.emit('updateResources', players);
 }, 1000);
 
+// Движение и захват (30 FPS на сервере)
 setInterval(() => {
     let stateChanged = false;
 
@@ -170,7 +169,6 @@ setInterval(() => {
                 a.y += (dy / distance) * a.speed;
                 stateChanged = true;
             } else {
-                // ИСПРАВЛЕНИЕ: Жесткая фиксация координат по прибытии (убирает прыжки)
                 a.x = a.targetX; 
                 a.y = a.targetY;
                 a.targetX = null; 
@@ -190,8 +188,10 @@ setInterval(() => {
                 territory[cellKey] = { owner: a.owner, regionId: newRegionId };
                 if (players[a.owner]) players[a.owner].cells++;
                 if (regions[newRegionId]) regions[newRegionId].cells++;
+                
+                // ИСПРАВЛЕНИЕ СЕТИ: Отправляем только измененную клетку!
+                io.emit('cellUpdate', { key: cellKey, cell: territory[cellKey], regions: regions, players: players });
                 stateChanged = true;
-                io.emit('syncTerritory', { territory, regions });
             }
         }
     }
@@ -208,9 +208,7 @@ setInterval(() => {
         }
     }
 
-    for(const id in armies) {
-        if(armies[id].count <= 0) { delete armies[id]; continue; }
-    }
+    for(const id in armies) { if(armies[id].count <= 0) { delete armies[id]; continue; } }
     
     if (stateChanged) io.emit('syncArmies', armies);
 }, 1000 / 30);
