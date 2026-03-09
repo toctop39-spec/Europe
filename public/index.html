@@ -17,8 +17,9 @@
             <div id="newCountryForm">
                 <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
                 <br><br>
-                <input type="text" id="countryFlag" placeholder="Флаг (напр. 🇺🇦)" maxlength="2" class="flag-input">
-                <br><br>
+                <label style="display: block; margin-bottom: 5px;">Флаг страны (Картинка):</label>
+                <input type="file" id="countryFlagFile" accept="image/*" style="width: 100%; background: #222; color: white; border: 1px solid #555; padding: 5px; margin-bottom: 15px;">
+                
                 <label>Цвет на карте:</label>
                 <input type="color" id="countryColor" value="#2b5e8a">
                 <br><br>
@@ -29,7 +30,7 @@
     </div>
 
     <div id="topBar" style="display: none;">
-        <div class="stat"><span id="myFlagUI"></span> <span id="myName"></span></div>
+        <div class="stat"><img id="myFlagUI" style="width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 5px; border: 1px solid #fff;"> <span id="myName"></span></div>
         <div class="stat text-green">Доллары: <span id="myDollars">0</span> $ (<span id="myIncome">0</span>/с)</div>
         <div class="stat text-red">Военная сила: <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
         <div class="stat">Территория: <span id="myArea">0</span> км²</div>
