@@ -10,55 +10,74 @@ app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 
-// Хранилище игры
-let players = {}; // Данные стран (цвет, имя, площадь)
-let territory = {}; // Сетка карты: "x_y" -> socket.id
+let players = {}; 
+let territory = {}; 
+let capitals = {}; // Храним координаты столиц: id -> {x, y}
 
 io.on('connection', (socket) => {
-    // Отправляем новому игроку текущую карту
-    socket.emit('initData', { players, territory });
+    socket.emit('initData', { players, territory, capitals });
 
-    // Игрок основывает страну
     socket.on('joinGame', (data) => {
         players[socket.id] = {
             name: data.name,
             color: data.color,
-            cells: 0
+            cells: 0,
+            gold: 100, // Стартовые деньги
+            isSpawned: false
         };
         io.emit('playerJoined', { id: socket.id, player: players[socket.id] });
     });
 
-    // Обработка закрашивания клетки
-    socket.on('claimCell', (data) => {
-        if (!players[socket.id]) return; // Запрещаем красить, если не создал страну
+    // Механика спавна (Выбор стартовой точки)
+    socket.on('spawnCapital', (data) => {
+        const player = players[socket.id];
+        if (!player || player.isSpawned) return; // Нельзя спавниться дважды
 
-        const cellKey = `${data.x}_${data.y}`;
-        const previousOwner = territory[cellKey];
+        const { x, y } = data;
+        capitals[socket.id] = { x, y };
+        player.isSpawned = true;
 
-        // Если отбираем клетку у другого игрока — уменьшаем его счетчик
-        if (previousOwner && previousOwner !== socket.id && players[previousOwner]) {
-            players[previousOwner].cells--;
-        }
+        // Захватываем стартовую территорию (крестик 3x3 вокруг столицы)
+        const spawnTiles = [
+            {dx: 0, dy: 0}, {dx: 1, dy: 0}, {dx: -1, dy: 0}, 
+            {dx: 0, dy: 1}, {dx: 0, dy: -1}
+        ];
 
-        // Записываем клетку на нового владельца
-        if (previousOwner !== socket.id) {
-            territory[cellKey] = socket.id;
-            players[socket.id].cells++;
+        spawnTiles.forEach(offset => {
+            const tileX = x + offset.dx;
+            const tileY = y + offset.dy;
+            const cellKey = `${tileX}_${tileY}`;
             
-            // Рассылаем обновление всем игрокам
-            io.emit('cellUpdated', { 
-                key: cellKey, 
-                owner: socket.id,
-                players: players
-            });
-        }
+            if (!territory[cellKey]) {
+                territory[cellKey] = socket.id;
+                player.cells++;
+            }
+        });
+
+        io.emit('updateMap', { players, territory, capitals });
     });
 
     socket.on('disconnect', () => {
-        // Игрок ушел, но его империя (цвет на карте) остается
         console.log(`Игрок отключился: ${socket.id}`);
     });
 });
+
+// ИГРОВОЙ ЦИКЛ (Game Loop) - работает каждую секунду
+setInterval(() => {
+    let changed = false;
+    for (const id in players) {
+        if (players[id].isSpawned) {
+            // Начисляем золото: базовая прибыль + бонус за размер территории
+            players[id].gold += 5 + (players[id].cells * 2);
+            changed = true;
+        }
+    }
+    
+    // Если у кого-то изменились ресурсы, отправляем обновление всем
+    if (changed) {
+        io.emit('updateResources', players);
+    }
+}, 1000); // 1000 мс = 1 секунда
 
 server.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
