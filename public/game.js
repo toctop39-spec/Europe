@@ -393,6 +393,7 @@ canvas.addEventListener('mouseup', (e) => {
             if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y; 
         });
 
+        if (isDrawingRegion && lassoPoints.length > 2) {
         let tilesInside = [];
         let startCol = Math.max(0, Math.floor(minX / TILE_SIZE)); let endCol = Math.min(WORLD_WIDTH/TILE_SIZE, Math.ceil(maxX / TILE_SIZE));
         let startRow = Math.max(0, Math.floor(minY / TILE_SIZE)); let endRow = Math.min(WORLD_HEIGHT/TILE_SIZE, Math.ceil(maxY / TILE_SIZE));
@@ -436,13 +437,43 @@ canvas.addEventListener('mouseup', (e) => {
     }
 });
 
+// СПРАШИВАЕМ ИМЯ
+    const regionName = prompt("Введите название нового региона:", `Регион ${Object.keys(regions).length + 1}`);
+    if (regionName) {
+        socket.emit('lassoRegion', { 
+            tiles: tilesInside, 
+            newRegionId: currentDrawingRegionId,
+            name: regionName
+        });
+    }
+    
+    isDrawingRegion = false; lassoPoints = []; 
+    document.getElementById('drawRegionBtn').innerText = "Новый регион (Обвести)";
+    return;
+}
+
+// ДОБАВЛЯЕМ ОБРАБОТЧИК КНОПКИ ПЕРЕИМЕНОВАНИЯ
+document.getElementById('renameRegBtn').addEventListener('click', () => {
+    if (clickedRegionId && regions[clickedRegionId]) {
+        const newName = prompt("Новое название:", regions[clickedRegionId].name);
+        if (newName) {
+            socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName });
+        }
+    }
+});
+
+// ИСПРАВЛЕННЫЙ updateRegionPanel (чтобы не показывал "Столицу" везде)
 function updateRegionPanel() {
-    if (!clickedRegionId || !regions[clickedRegionId]) return;
+    if (!clickedRegionId || !regions[clickedRegionId]) {
+        document.getElementById('regionPanel').style.display = 'none';
+        return;
+    }
+    
     const reg = regions[clickedRegionId];
     
     document.getElementById('regionPanel').style.display = 'block';
-    document.getElementById('regName').innerText = reg.name;
-    document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
+    document.getElementById('regName').innerText = reg.name; // БЕРЕМ ИМЯ ИЗ ОБЪЕКТА РЕГИОНА
+    document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Ничейный";
     
     document.getElementById('regLevel').innerText = reg.level;
     document.getElementById('regIncome').innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
