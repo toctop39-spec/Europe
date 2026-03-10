@@ -38,17 +38,19 @@
 
     <div id="controlPanel" style="display: none;">
         <h3>Управление</h3>
-        <button id="drawRegionBtn" class="btn-civil">Выделить новый регион</button>
+        <button id="drawRegionBtn" class="btn-civil">Новый регион (Обвести)</button>
         <button id="disbandBtn" class="btn-disband" style="display: none;">Распустить армию</button>
-        <p id="systemMsg" class="sys-msg">Ожидание приказа...</p>
+        <p id="systemMsg" class="sys-msg">Управление камерой: W A S D</p>
     </div>
 
     <div id="regionPanel" style="display: none;">
         <h3 id="regName">Регион</h3>
         <p>Принадлежит: <span id="regOwner"></span></p>
-        <p>Уровень: <span id="regLevel">1</span>/10</p>
-        <p>ВВП: <span id="regIncome"></span> $/с</p>
-        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 15px;">Прокачать (<span id="upgradeCost">0</span> $)</button>
+        <p>Экономика: ур. <span id="regLevel">1</span>/10 (<span id="regIncome"></span> $/с)</p>
+        <p>Оборона: ур. <span id="regDefLevel">0</span>/10 (Урон: <span id="regDefDmg">0</span>/с)</p>
+        
+        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 5px;">Улучшить ВВП (<span id="upgradeCost">0</span> $)</button>
+        <button id="upgradeDefBtn" class="btn-civil" style="background:#c0392b; margin-bottom: 15px;">Улучшить Защиту</button>
         
         <hr style="border-color: #444; margin: 10px 0;">
         <p style="font-size: 12px; color: #aaa;">Развернуть войска:</p>
