@@ -50,13 +50,16 @@ io.on('connection', (socket) => {
         socket.emit('joinSuccess', cId); io.emit('initLobby', countries); io.emit('updateMap', { countries, territory, regions });
     });
 
-    socket.on('spawnCapital', (data) => {
-        const cId = playerSockets[socket.id]; if (!cId) return;
-        const country = countries[cId]; if (!country || country.isSpawned) return;
+socket.on('spawnCapital', (data) => {
+    const cId = playerSockets[socket.id]; 
+    if (!cId || countries[cId].isSpawned) return;
 
-        country.isSpawned = true;
-        const startRegionId = `reg_${cId}_cap`;
-        regions[startRegionId] = { name: "Столичный регион", owner: cId, cells: 0, level: 1, defLevel: 0 };
+    const startRegionId = `reg_${cId}_cap`;
+    // ФИКСИРУЕМ КОРДИНАТЫ ГОРОДА НАВСЕГДА
+    regions[startRegionId] = { 
+        name: "Столица", owner: cId, cells: 0, level: 1, defLevel: 0,
+        cityX: data.x, cityY: data.y // Статичный центр
+    };
 
         for(let dx = -6; dx <= 6; dx++) {
             for(let dy = -6; dy <= 6; dy++) {
@@ -212,6 +215,41 @@ setInterval(() => {
         }
     }
 
+
+    for (const rId in regions) {
+        const reg = regions[rId];
+        const cityKey = `${reg.cityX}_${reg.cityY}`;
+        
+        // Ищем, есть ли вражеская армия в городе
+        for (const aId in armies) {
+            const a = armies[aId];
+            const ax = Math.floor(a.x / TILE_SIZE);
+            const ay = Math.floor(a.y / TILE_SIZE);
+            
+            // Если враг стоит прямо в городе (или в радиусе 1 клетки)
+            if (ax === reg.cityX && ay === reg.cityY && a.owner !== reg.owner) {
+                const oldOwner = reg.owner;
+                const newOwner = a.owner;
+                
+                // МГНОВЕННЫЙ ЗАХВАТ РЕГИОНА
+                reg.owner = newOwner;
+                
+                // Перекрашиваем все клетки этого региона
+                for (const tKey in territory) {
+                    if (territory[tKey].regionId === rId) {
+                        territory[tKey].owner = newOwner;
+                    }
+                }
+                
+                // Обновляем счетчики клеток у стран
+                // (Это можно сделать массово через пересчет или аккуратно тут)
+                io.emit('syncTerritory', { territory, regions });
+                io.emit('updateMap', { countries, territory, regions });
+                break; 
+            }
+        }
+    }
+    
     for (const id in armies) {
         let a = armies[id];
         
