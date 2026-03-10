@@ -262,17 +262,22 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
-    const regCenters = getRegionCenters();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
-    for (const rId in regCenters) {
-        const c = regCenters[rId];
-        if (c.count > 0) {
-            const tx = (c.sumX/c.count)*TILE_SIZE + (TILE_SIZE/2); const ty = (c.sumY/c.count)*TILE_SIZE + (TILE_SIZE/2);
-            // ГОРОДА: Темный квадратик в центре региона
-            ctx.fillStyle = 'rgba(20, 20, 20, 0.9)'; ctx.fillRect(tx - 3, ty - 3, 6, 6);
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-            ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2;
-            ctx.strokeText(c.name, tx, ty - 6); ctx.fillText(c.name, tx, ty - 6);
+for (const rId in regions) {
+        const reg = regions[rId];
+        if (reg.cityX !== undefined) {
+            const tx = reg.cityX * TILE_SIZE + TILE_SIZE / 2;
+            const ty = reg.cityY * TILE_SIZE + TILE_SIZE / 2;
+            
+            // ГОРОД (Тёмный квадрат) - теперь рисуется по фиксированным координатам
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.9)';
+            ctx.fillRect(tx - 4, ty - 4, 8, 8);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 / camera.zoom;
+            ctx.strokeRect(tx - 4, ty - 4, 8, 8);
+
+            // Название над городом
+            ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText(reg.name, tx, ty - 10 / camera.zoom);
         }
     }
 
@@ -338,10 +343,15 @@ function getWorldCoords(e) {
     const rect = canvas.getBoundingClientRect();
     const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    
     let wx = (canvasMouseX - camera.x) / camera.zoom;
     let wy = (canvasMouseY - camera.y) / camera.zoom;
-    // Ограничение кликов границами карты
-    return { x: Math.max(0, Math.min(WORLD_WIDTH, wx)), y: Math.max(0, Math.min(WORLD_HEIGHT, wy)) };
+
+    // ИСПРАВЛЕНИЕ: Клик никогда не выйдет за границы 1920x1080
+    return { 
+        x: Math.max(2, Math.min(WORLD_WIDTH - 2, wx)), 
+        y: Math.max(2, Math.min(WORLD_HEIGHT - 2, wy)) 
+    };
 }
 
 canvas.addEventListener('mousedown', (e) => { 
