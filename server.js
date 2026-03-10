@@ -7,24 +7,18 @@ const server = http.createServer(app);
 const io = new Server(server);
 app.use(express.static('public'));
 
-// --- ГЛОБАЛЬНЫЕ ДАННЫЕ ---
 let countries = {}; 
 let playerSockets = {}; 
 let territory = {}; 
 let armies = {}; 
 let regions = {}; 
 
-const WORLD_WIDTH = 1920; 
-const WORLD_HEIGHT = 1080;
+const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const COLLISION_RADIUS = 4; // Маленькие фишки армий
+const COLLISION_RADIUS = 4; 
 
 let mapChangedForCauldrons = false; 
 
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-function getCellKey(x, y) { return `${Math.floor(x)}_${Math.floor(y)}`; }
-
-// --- СЕТЕВАЯ ЛОГИКА ---
 io.on('connection', (socket) => {
     socket.emit('initLobby', countries);
     socket.emit('initData', { countries, territory, armies, regions });
@@ -38,13 +32,10 @@ io.on('connection', (socket) => {
                 cells: 0, dollars: 10000, military: 5000, cap: 5000, isSpawned: false, online: true
             };
         } else {
-            cId = data.countryId;
-            if (countries[cId]) countries[cId].online = true;
+            cId = data.countryId; if (countries[cId]) countries[cId].online = true;
         }
         playerSockets[socket.id] = cId;
-        socket.emit('joinSuccess', cId);
-        io.emit('initLobby', countries);
-        io.emit('updateMap', { countries, territory, regions });
+        socket.emit('joinSuccess', cId); io.emit('initLobby', countries);
     });
 
     socket.on('spawnCapital', (data) => {
@@ -54,8 +45,6 @@ io.on('connection', (socket) => {
 
         country.isSpawned = true;
         const startRegionId = `reg_${cId}_cap`;
-        
-        // ГОРОД-СТОЛИЦА (Никогда не меняет место)
         regions[startRegionId] = { 
             name: "Столица", owner: cId, cells: 0, level: 1, defLevel: 0,
             cityX: data.x, cityY: data.y 
@@ -77,9 +66,8 @@ io.on('connection', (socket) => {
         io.emit('updateMap', { countries, territory, regions });
     });
 
-  // Улучшенная обработка ЛАССО
     socket.on('lassoRegion', (data) => {
-        const cId = playerSockets[socket.id]; 
+        const cId = playerSockets[socket.id];
         if (!cId || !data.tiles.length) return;
 
         let sumX = 0, sumY = 0;
@@ -88,15 +76,23 @@ io.on('connection', (socket) => {
             sumX += x; sumY += y;
         });
 
-        // ГЕОМЕТРИЧЕСКИЙ ЦЕНТР РЕГИОНА
-        const cityX = Math.floor(sumX / data.tiles.length);
-        const cityY = Math.floor(sumY / data.tiles.length);
+        const avgX = Math.floor(sumX / data.tiles.length);
+        const avgY = Math.floor(sumY / data.tiles.length);
+
+        // Поиск ближайшей КЛЕТКИ к центру (чтобы город был внутри)
+        let bestKey = data.tiles[0];
+        let minDist = Infinity;
+        data.tiles.forEach(key => {
+            const [x, y] = key.split('_').map(Number);
+            const d = Math.hypot(x - avgX, y - avgY);
+            if (d < minDist) { minDist = d; bestKey = key; }
+        });
+        const [fX, fY] = bestKey.split('_').map(Number);
 
         if (!regions[data.newRegionId]) {
             regions[data.newRegionId] = { 
-                name: data.name || `Регион ${Object.keys(regions).length + 1}`, 
-                owner: cId, cells: 0, level: 1, defLevel: 0,
-                cityX: cityX, cityY: cityY 
+                name: data.name, owner: cId, cells: 0, level: 1, defLevel: 0,
+                cityX: fX, cityY: fY 
             };
         }
 
@@ -111,42 +107,21 @@ io.on('connection', (socket) => {
         io.emit('syncTerritory', { territory, regions });
     });
 
-    // СОБЫТИЕ ПЕРЕИМЕНОВАНИЯ
     socket.on('renameRegion', (data) => {
         const cId = playerSockets[socket.id];
         const reg = regions[data.regionId];
-        if (reg && reg.owner === cId && data.newName.trim().length > 0) {
-            reg.name = data.newName.substring(0, 20);
+        if (reg && reg.owner === cId) {
+            reg.name = data.newName;
             io.emit('syncTerritory', { territory, regions });
         }
     });
 
     socket.on('upgradeRegion', (rId) => {
         const cId = playerSockets[socket.id];
-        const reg = regions[rId];
-        if (reg && reg.owner === cId && reg.level < 10) {
-            const cost = reg.cells * reg.level * 50;
-            if (countries[cId].dollars >= cost) {
-                countries[cId].dollars -= cost; reg.level++;
-                io.emit('syncTerritory', { territory, regions });
-                io.emit('updateResources', countries);
-            }
-        }
-    });
-
-    socket.on('upgradeDefense', (rId) => {
-        const cId = playerSockets[socket.id];
-        const reg = regions[rId];
-        if (reg && reg.owner === cId && (reg.defLevel || 0) < 10) {
-            const next = (reg.defLevel || 0) + 1;
-            const costD = reg.cells * next * 20;
-            const costM = reg.cells * next * 10;
-            if (countries[cId].dollars >= costD && countries[cId].military >= costM) {
-                countries[cId].dollars -= costD; countries[cId].military -= costM;
-                reg.defLevel = next;
-                io.emit('syncTerritory', { territory, regions });
-                io.emit('updateResources', countries);
-            }
+        if (regions[rId] && regions[rId].owner === cId && countries[cId].dollars >= regions[rId].cells * regions[rId].level * 50) {
+            countries[cId].dollars -= regions[rId].cells * regions[rId].level * 50;
+            regions[rId].level++;
+            io.emit('updateResources', countries); io.emit('syncTerritory', { territory, regions });
         }
     });
 
@@ -156,13 +131,8 @@ io.on('connection', (socket) => {
         if (reg && reg.owner === cId && countries[cId].military >= data.amount) {
             countries[cId].military -= data.amount;
             const id = Math.random().toString(36).substr(2, 9);
-            armies[id] = {
-                id, owner: cId, count: parseInt(data.amount),
-                x: reg.cityX * TILE_SIZE, y: reg.cityY * TILE_SIZE,
-                targetX: null, targetY: null, speed: 0.25
-            };
-            io.emit('syncArmies', armies);
-            io.emit('updateResources', countries);
+            armies[id] = { id, owner: cId, count: parseInt(data.amount), x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: 0.3 };
+            io.emit('syncArmies', armies); io.emit('updateResources', countries);
         }
     });
 
@@ -176,47 +146,35 @@ io.on('connection', (socket) => {
         });
     });
 
-    socket.on('disbandArmies', (ids) => {
-        const cId = playerSockets[socket.id];
-        ids.forEach(id => { if (armies[id] && armies[id].owner === cId) delete armies[id]; });
-        io.emit('syncArmies', armies);
-    });
-
     socket.on('disconnect', () => {
         const cId = playerSockets[socket.id];
-        if (cId && countries[cId]) { countries[cId].online = false; io.emit('initLobby', countries); }
+        if (cId && countries[cId]) countries[cId].online = false;
         delete playerSockets[socket.id];
     });
 });
 
-// --- ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ (30 FPS) ---
+// ЦИКЛ ИГРЫ (Захват, Бой)
 setInterval(() => {
-    let changed = false;
+    let stateChanged = false;
     const armyIds = Object.keys(armies);
 
-    // 1. Очистка боевых данных
-    armyIds.forEach(id => { 
-        armies[id].inCombat = false; 
-        armies[id].targets = []; 
-        armies[id].dmg = 0; 
-    });
+    armyIds.forEach(id => { armies[id].targets = []; armies[id].dmg = 0; });
 
-    // 2. Коллизии и Осада городов
+    // Осада городов и Коллизии
     for (let i = 0; i < armyIds.length; i++) {
         const a = armies[armyIds[i]];
         
-        // Проверка захвата города
         for (const rId in regions) {
             const reg = regions[rId];
             if (Math.floor(a.x/TILE_SIZE) === reg.cityX && Math.floor(a.y/TILE_SIZE) === reg.cityY && a.owner !== reg.owner) {
+                // ЗАХВАТ: Имя НЕ меняем
                 const oldOwner = reg.owner;
-                const newOwner = a.owner;
-                reg.owner = newOwner;
+                reg.owner = a.owner;
                 for (const k in territory) {
                     if (territory[k].regionId === rId) {
                         if (countries[oldOwner]) countries[oldOwner].cells--;
-                        territory[k].owner = newOwner;
-                        if (countries[newOwner]) countries[newOwner].cells++;
+                        territory[k].owner = a.owner;
+                        countries[a.owner].cells++;
                     }
                 }
                 io.emit('updateMap', { countries, territory, regions });
@@ -225,79 +183,46 @@ setInterval(() => {
 
         for (let j = i + 1; j < armyIds.length; j++) {
             const b = armies[armyIds[j]];
-            const dist = Math.hypot(a.x - b.x, a.y - b.y);
-            if (dist < COLLISION_RADIUS * 2) {
-                if (a.owner !== b.owner) {
-                    a.targets.push(b.id); b.targets.push(a.id);
-                    a.targetX = null; b.targetX = null;
-                } else {
-                    const push = (COLLISION_RADIUS * 2 - dist) * 0.5;
-                    const angle = Math.atan2(a.y - b.y, a.x - b.x);
-                    a.x += Math.cos(angle) * push; a.y += Math.sin(angle) * push;
-                    b.x -= Math.cos(angle) * push; b.y -= Math.sin(angle) * push;
-                    changed = true;
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (d < COLLISION_RADIUS * 2) {
+                if (a.owner !== b.owner) { a.targets.push(b.id); b.targets.push(a.id); a.targetX = null; b.targetX = null; }
+                else {
+                    const p = (COLLISION_RADIUS * 2 - d) * 0.5;
+                    const ang = Math.atan2(a.y-b.y, a.x-b.x);
+                    a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p;
+                    stateChanged = true;
                 }
             }
         }
     }
 
-    // 3. Движение, Захват и Аттришн (Истощение)
     armyIds.forEach(id => {
         const a = armies[id];
-        const key = getCellKey(a.x / TILE_SIZE, a.y / TILE_SIZE);
-        const cell = territory[key];
-
-        // Урон от защиты региона (Attrition)
+        const cell = territory[`${Math.floor(a.x/TILE_SIZE)}_${Math.floor(a.y/TILE_SIZE)}`];
         if (cell && cell.owner !== a.owner && regions[cell.regionId]) {
-            const def = regions[cell.regionId].defLevel || 0;
-            if (def > 0) a.dmg += (def * 50) / 30; // 500/сек на макс уровне
+            a.dmg += ((regions[cell.regionId].defLevel || 0) * 50) / 30;
         }
-
-        // Движение и обычный захват
         if (!a.targets.length && a.targetX !== null) {
-            const dist = Math.hypot(a.targetX - a.x, a.targetY - a.y);
-            if (dist > a.speed) {
-                a.x += ((a.targetX - a.x) / dist) * a.speed;
-                a.y += ((a.targetY - a.y) / dist) * a.speed;
-                changed = true;
-            } else { a.targetX = null; }
-
-            if (!cell || cell.owner !== a.owner) {
-                if (cell && countries[cell.owner]) {
-                    countries[cell.owner].cells--;
-                    if (regions[cell.regionId]) regions[cell.regionId].cells--;
-                }
-                const regId = `reg_${a.owner}_cap`;
-                territory[key] = { owner: a.owner, regionId: regId };
-                countries[a.owner].cells++;
-                if (regions[regId]) regions[regId].cells++;
-                io.emit('cellUpdate', { key, cell: territory[key], regions, countries });
-                mapChangedForCauldrons = true;
-            }
+            const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
+            if (d > a.speed) { a.x += ((a.targetX-a.x)/d)*a.speed; a.y += ((a.targetY-a.y)/d)*a.speed; stateChanged = true; }
+            else { a.targetX = null; }
         }
     });
 
-    // 4. Боевая математика (Закон Ланчестера)
     armyIds.forEach(id => {
         const a = armies[id];
         if (a.targets.length) {
-            a.inCombat = true;
-            const target = armies[a.targets[0]];
-            if (target) {
-                const flankBonus = 1 + (target.targets.length - 1) * 0.5;
-                target.dmg += (a.count * 0.005) * flankBonus;
-                changed = true;
-            }
+            const t = armies[a.targets[0]];
+            if (t) t.dmg += (a.count * 0.005) * (1 + (t.targets.length - 1) * 0.5);
         }
     });
 
-    // Применение урона
     armyIds.forEach(id => {
-        if (armies[id].dmg > 0) { armies[id].count -= armies[id].dmg; changed = true; }
+        if (armies[id].dmg > 0) { armies[id].count -= armies[id].dmg; stateChanged = true; }
         if (armies[id].count <= 0) delete armies[id];
     });
 
-    if (changed) io.emit('syncArmies', armies);
+    if (stateChanged) io.emit('syncArmies', armies);
 }, 33);
 
 // --- АСИНХРОННЫЕ КОТЛЫ (ВКЛЮЧАЯ ЗАХВАТ ВРАГОВ) ---
@@ -389,3 +314,4 @@ setInterval(() => {
 }, 1000);
 
 server.listen(3000, () => console.log('WAR ENGINE ONLINE'));
+
