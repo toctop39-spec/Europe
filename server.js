@@ -77,8 +77,9 @@ io.on('connection', (socket) => {
         io.emit('updateMap', { countries, territory, regions });
     });
 
+  // Улучшенная обработка ЛАССО
     socket.on('lassoRegion', (data) => {
-        const cId = playerSockets[socket.id];
+        const cId = playerSockets[socket.id]; 
         if (!cId || !data.tiles.length) return;
 
         let sumX = 0, sumY = 0;
@@ -87,24 +88,37 @@ io.on('connection', (socket) => {
             sumX += x; sumY += y;
         });
 
+        // ГЕОМЕТРИЧЕСКИЙ ЦЕНТР РЕГИОНА
+        const cityX = Math.floor(sumX / data.tiles.length);
+        const cityY = Math.floor(sumY / data.tiles.length);
+
         if (!regions[data.newRegionId]) {
             regions[data.newRegionId] = { 
-                name: `Регион ${Object.keys(regions).length + 1}`, 
+                name: data.name || `Регион ${Object.keys(regions).length + 1}`, 
                 owner: cId, cells: 0, level: 1, defLevel: 0,
-                cityX: Math.floor(sumX / data.tiles.length),
-                cityY: Math.floor(sumY / data.tiles.length)
+                cityX: cityX, cityY: cityY 
             };
         }
 
         data.tiles.forEach(key => {
             const cell = territory[key];
-            if (cell && cell.owner === cId && cell.regionId !== data.newRegionId) {
+            if (cell && cell.owner === cId) {
                 if (regions[cell.regionId]) regions[cell.regionId].cells--;
                 cell.regionId = data.newRegionId;
                 regions[data.newRegionId].cells++;
             }
         });
         io.emit('syncTerritory', { territory, regions });
+    });
+
+    // СОБЫТИЕ ПЕРЕИМЕНОВАНИЯ
+    socket.on('renameRegion', (data) => {
+        const cId = playerSockets[socket.id];
+        const reg = regions[data.regionId];
+        if (reg && reg.owner === cId && data.newName.trim().length > 0) {
+            reg.name = data.newName.substring(0, 20);
+            io.emit('syncTerritory', { territory, regions });
+        }
     });
 
     socket.on('upgradeRegion', (rId) => {
