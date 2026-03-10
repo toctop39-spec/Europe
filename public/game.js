@@ -139,15 +139,28 @@ socket.on('syncArmies', (a) => {
     for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } }
 });
 
-// ДВИЖОК
+// Находим функцию gameLoop и заменяем управление камерой внутри неё:
 function gameLoop() {
-    // Камера WASD
+    // УПРАВЛЕНИЕ WASD с проверкой границ
     const camSpeed = 15 / camera.zoom;
     if (keys.w) camera.y += camSpeed;
     if (keys.s) camera.y -= camSpeed;
     if (keys.a) camera.x += camSpeed;
     if (keys.d) camera.x -= camSpeed;
 
+    // ОГРАНИЧЕНИЕ КАМЕРЫ (чтобы не видеть пустоту)
+    // Не даем камере уйти слишком далеко вправо/вниз (координаты не могут быть положительными больше 0)
+    if (camera.x > 0) camera.x = 0;
+    if (camera.y > 0) camera.y = 0;
+
+    // Не даем камере уйти слишком далеко влево/вверх (с учетом зума)
+    const minX = canvas.width - WORLD_WIDTH * camera.zoom;
+    const minY = canvas.height - WORLD_HEIGHT * camera.zoom;
+    
+    if (camera.x < minX) camera.x = minX;
+    if (camera.y < minY) camera.y = minY;
+
+    // Обновление визуальных армий
     for(let id in visualArmies) {
         if(armies[id]) {
             visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4;
@@ -159,6 +172,25 @@ function gameLoop() {
     drawMap();
     requestAnimationFrame(gameLoop);
 }
+
+// Заменяем обработчик Wheel (зум), чтобы он тоже соблюдал границы:
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomAmount = 0.1;
+    const oldZoom = camera.zoom;
+    
+    // Минимальный зум вычисляем так, чтобы карта всегда заполняла экран
+    const minZoom = Math.max(canvas.width / WORLD_WIDTH, canvas.height / WORLD_HEIGHT);
+    camera.zoom = e.deltaY > 0 ? Math.max(minZoom, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount);
+    
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    
+    // Пересчитываем положение, чтобы зум шел в точку курсора
+    camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom);
+    camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom);
+});
 
 function updateUI() {
     if (myId && countries[myId]) {
