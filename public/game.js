@@ -384,100 +384,58 @@ canvas.addEventListener('mousemove', (e) => {
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
     
-    // --- ЛОГИКА ЗАВЕРШЕНИЯ ЛАССО (Создание региона) ---
+    // --- ЛАССО ---
     if (isDrawingRegion && lassoPoints.length > 2) {
         let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
-        let poly = [];
-        lassoPoints.forEach(p => { 
-            poly.push([p.x, p.y]);
+        let poly = lassoPoints.map(p => {
             if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
-            if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y; 
+            if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
+            return [p.x, p.y];
         });
 
         let tilesInside = [];
-        let startCol = Math.max(0, Math.floor(minX / TILE_SIZE)); 
-        let endCol = Math.min(WORLD_WIDTH/TILE_SIZE - 1, Math.ceil(maxX / TILE_SIZE));
-        let startRow = Math.max(0, Math.floor(minY / TILE_SIZE)); 
-        let endRow = Math.min(WORLD_HEIGHT/TILE_SIZE - 1, Math.ceil(maxY / TILE_SIZE));
-
-        for(let c = startCol; c <= endCol; c++) {
-            for(let r = startRow; r <= endRow; r++) {
-                let px = c * TILE_SIZE + TILE_SIZE/2; 
-                let py = r * TILE_SIZE + TILE_SIZE/2;
-                if (pointInPolygon([px, py], poly)) { 
-                    tilesInside.push(`${c}_${r}`); 
-                }
+        for(let c = Math.max(0, Math.floor(minX/TILE_SIZE)); c <= Math.min(WORLD_WIDTH/TILE_SIZE-1, Math.ceil(maxX/TILE_SIZE)); c++) {
+            for(let r = Math.max(0, Math.floor(minY/TILE_SIZE)); r <= Math.min(WORLD_HEIGHT/TILE_SIZE-1, Math.ceil(maxY/TILE_SIZE)); r++) {
+                if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
             }
         }
 
         if (tilesInside.length > 0) {
-            // СПРАШИВАЕМ ИМЯ РЕГИОНА
-            const regionName = prompt("Введите название нового региона:", `Регион ${Object.keys(regions).length + 1}`);
-            
-            if (regionName !== null) { // Если нажал "ОК" (даже если пустое имя)
-                socket.emit('lassoRegion', { 
-                    tiles: tilesInside, 
-                    newRegionId: currentDrawingRegionId,
-                    name: regionName || `Регион ${Object.keys(regions).length + 1}`
-                });
-                showMsg("Регион сформирован!");
+            const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`);
+            if (name !== null) {
+                socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" });
             }
         }
-
-        isDrawingRegion = false; 
-        lassoPoints = []; 
+        isDrawingRegion = false; lassoPoints = []; 
         document.getElementById('drawRegionBtn').innerText = "Новый регион (Обвести)";
-        return; // Выходим, чтобы не сработала логика выделения армий
+        return;
     }
 
-    // --- ЛОГИКА ВЫДЕЛЕНИЯ АРМИЙ И КЛИКА ПО РЕГИОНУ ---
+    // --- ВЫДЕЛЕНИЕ ---
     if (e.button === 0 && isSelecting) {
         isSelecting = false; 
-        const world = getWorldCoords(e); 
-        selectionBox.endX = world.x; selectionBox.endY = world.y;
-        
-        const minX = Math.min(selectionBox.startX, selectionBox.endX); 
-        const maxX = Math.max(selectionBox.startX, selectionBox.endX);
-        const minY = Math.min(selectionBox.startY, selectionBox.endY); 
-        const maxY = Math.max(selectionBox.startY, selectionBox.endY);
-        
+        const world = getWorldCoords(e);
+        const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x);
+        const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
+        
         selectedArmies = [];
-
-        const hitRadius = (8 / camera.zoom) + 2; 
-
+        const hr = (8 / camera.zoom) + 2;
         for (const id in visualArmies) {
             const a = visualArmies[id];
             if (a.owner === myId) {
-                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= hitRadius) { 
-                    selectedArmies.push(id); 
-                } 
-                else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) { 
-                    selectedArmies.push(id); 
-                }
+                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= hr) selectedArmies.push(id);
+                else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) selectedArmies.push(id);
             }
         }
 
-        // Показываем кнопку роспуска если есть выделенные войска
         document.getElementById('disbandBtn').style.display = selectedArmies.length > 0 ? 'block' : 'none';
 
-        // Если это клик и мы не выбрали армию — проверяем, кликнули ли по региону
         if (isClick && selectedArmies.length === 0) {
-            const cellX = Math.floor(world.x / TILE_SIZE);
-            const cellY = Math.floor(world.y / TILE_SIZE);
-            const cellKey = `${cellX}_${cellY}`;
-            
-            if (territory[cellKey] && territory[cellKey].owner === myId) { 
-                clickedRegionId = territory[cellKey].regionId; 
-                updateRegionPanel();
-            } else { 
-                document.getElementById('regionPanel').style.display = 'none'; 
-                clickedRegionId = null; 
-            }
-        } else if (!isClick || selectedArmies.length > 0) { 
-            // Закрываем панель при выделении рамкой или клике в пустоту
-            document.getElementById('regionPanel').style.display = 'none'; 
-            clickedRegionId = null; 
+            const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
+            if (territory[key] && territory[key].owner === myId) {
+                clickedRegionId = territory[key].regionId; updateRegionPanel();
+            } else { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
         }
     }
 });
