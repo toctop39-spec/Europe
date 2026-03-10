@@ -71,33 +71,59 @@ io.on('connection', (socket) => {
         io.emit('updateMap', { countries, territory, regions });
     });
 
-    socket.on('lassoRegion', (data) => {
+  socket.on('lassoRegion', (data) => {
         const cId = playerSockets[socket.id];
         if (!cId || !data.tiles.length) return;
 
+        // 1. Сначала отбираем ТОЛЬКО те клетки внутри лассо, которые реально принадлежат тебе
+        let ownedTiles = [];
+        data.tiles.forEach(key => {
+            const cell = territory[key];
+            if (cell && cell.owner === cId) {
+                ownedTiles.push(key);
+            }
+        });
+
+        // Если в лассо не попало ни одной твоей клетки — отмена
+        if (ownedTiles.length === 0) return; 
+
         if (!regions[data.newRegionId]) {
             let sumX = 0, sumY = 0;
-            data.tiles.forEach(key => {
+            // 2. Считаем центр МАССЫ ИМЕННО ТВОЕГО РЕГИОНА, а не нарисованного круга
+            ownedTiles.forEach(key => {
                 const [x, y] = key.split('_').map(Number);
                 sumX += x; sumY += y;
             });
-            const avgX = Math.floor(sumX / data.tiles.length);
-            const avgY = Math.floor(sumY / data.tiles.length);
+            const avgX = Math.floor(sumX / ownedTiles.length);
+            const avgY = Math.floor(sumY / ownedTiles.length);
 
-            let bestKey = data.tiles[0];
+            // 3. Ищем ближайшую клетку к этому центру, чтобы город точно стоял на твоей земле
+            let bestKey = ownedTiles[0];
             let minDist = Infinity;
-            data.tiles.forEach(key => {
+            ownedTiles.forEach(key => {
                 const [x, y] = key.split('_').map(Number);
                 const d = Math.hypot(x - avgX, y - avgY);
                 if (d < minDist) { minDist = d; bestKey = key; }
             });
             const [fX, fY] = bestKey.split('_').map(Number);
 
+            // Создаем регион со столицей в правильном месте
             regions[data.newRegionId] = { 
                 name: data.name, owner: cId, cells: 0, level: 1, defLevel: 0,
                 cityX: fX, cityY: fY 
             };
         }
+
+        // 4. Привязываем клетки к новому региону
+        ownedTiles.forEach(key => {
+            const cell = territory[key];
+            if (regions[cell.regionId]) regions[cell.regionId].cells--;
+            cell.regionId = data.newRegionId;
+            regions[data.newRegionId].cells++;
+        });
+        
+        io.emit('syncTerritory', { territory, regions });
+    });
 
         data.tiles.forEach(key => {
             const cell = territory[key];
