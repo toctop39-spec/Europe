@@ -19,7 +19,6 @@ let selectedArmies = [];
 let isSelecting = false;
 let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 
-// ПЕРЕМЕННЫЕ ЛАССО
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null;
 let lassoPoints = [];
 
@@ -104,7 +103,7 @@ socket.on('joinSuccess', (cId) => {
 });
 
 
-// КНОПКИ
+// КНОПКИ УПРАВЛЕНИЯ
 document.getElementById('deployBtn').addEventListener('click', () => {
     const amount = document.getElementById('deployAmount').value;
     if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); showMsg(`Развертывание ${amount} солдат!`); }
@@ -124,8 +123,16 @@ document.getElementById('drawRegionBtn').addEventListener('click', () => {
     else { lassoPoints = []; }
 });
 
+document.getElementById('renameRegBtn').addEventListener('click', () => {
+    if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) {
+        const newName = prompt("Новое название:", regions[clickedRegionId].name);
+        if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName });
+    }
+});
+
 document.getElementById('closeRegBtn').addEventListener('click', () => { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; });
 
+// СИНХРОНИЗАЦИЯ СЕРВЕРА
 socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; });
 socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); });
 socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
@@ -139,28 +146,32 @@ socket.on('syncArmies', (a) => {
     for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } }
 });
 
-// Находим функцию gameLoop и заменяем управление камерой внутри неё:
+// АЛГОРИТМ ПРОВЕРКИ ТОЧКИ В ПОЛИГОНЕ
+function pointInPolygon(point, vs) {
+    let x = point[0], y = point[1]; let inside = false;
+    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+        let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1];
+        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+    return inside;
+}
+
+// ДВИЖОК
 function gameLoop() {
-    // УПРАВЛЕНИЕ WASD с проверкой границ
     const camSpeed = 15 / camera.zoom;
     if (keys.w) camera.y += camSpeed;
     if (keys.s) camera.y -= camSpeed;
     if (keys.a) camera.x += camSpeed;
     if (keys.d) camera.x -= camSpeed;
 
-    // ОГРАНИЧЕНИЕ КАМЕРЫ (чтобы не видеть пустоту)
-    // Не даем камере уйти слишком далеко вправо/вниз (координаты не могут быть положительными больше 0)
     if (camera.x > 0) camera.x = 0;
     if (camera.y > 0) camera.y = 0;
-
-    // Не даем камере уйти слишком далеко влево/вверх (с учетом зума)
     const minX = canvas.width - WORLD_WIDTH * camera.zoom;
     const minY = canvas.height - WORLD_HEIGHT * camera.zoom;
-    
     if (camera.x < minX) camera.x = minX;
     if (camera.y < minY) camera.y = minY;
 
-    // Обновление визуальных армий
     for(let id in visualArmies) {
         if(armies[id]) {
             visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4;
@@ -173,25 +184,6 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 
-// Заменяем обработчик Wheel (зум), чтобы он тоже соблюдал границы:
-canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const zoomAmount = 0.1;
-    const oldZoom = camera.zoom;
-    
-    // Минимальный зум вычисляем так, чтобы карта всегда заполняла экран
-    const minZoom = Math.max(canvas.width / WORLD_WIDTH, canvas.height / WORLD_HEIGHT);
-    camera.zoom = e.deltaY > 0 ? Math.max(minZoom, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount);
-    
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    
-    // Пересчитываем положение, чтобы зум шел в точку курсора
-    camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom);
-    camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom);
-});
-
 function updateUI() {
     if (myId && countries[myId]) {
         document.getElementById('myArea').innerText = Math.floor(countries[myId].cells * KM_PER_TILE / 1000).toLocaleString(); 
@@ -201,28 +193,6 @@ function updateUI() {
         document.getElementById('myMilitary').innerText = Math.floor(countries[myId].military).toLocaleString();
         document.getElementById('myCap').innerText = countries[myId].cap.toLocaleString();
     }
-}
-
-function getRegionCenters() {
-    let centers = {};
-    for (const key in territory) {
-        const cell = territory[key];
-        if (!centers[cell.regionId]) centers[cell.regionId] = { sumX: 0, sumY: 0, count: 0, name: regions[cell.regionId]?.name || '' };
-        const [x, y] = key.split('_').map(Number);
-        centers[cell.regionId].sumX += x; centers[cell.regionId].sumY += y; centers[cell.regionId].count++;
-    }
-    return centers;
-}
-
-// АЛГОРИТМ ПРОВЕРКИ ТОЧКИ В ПОЛИГОНЕ (Для лассо)
-function pointInPolygon(point, vs) {
-    let x = point[0], y = point[1]; let inside = false;
-    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-        let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1];
-        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-        if (intersect) inside = !inside;
-    }
-    return inside;
 }
 
 function drawMap() {
@@ -262,31 +232,26 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
-for (const rId in regions) {
+    // ГОРОДА
+    for (const rId in regions) {
         const reg = regions[rId];
         if (reg.cityX !== undefined) {
-            const tx = reg.cityX * TILE_SIZE + TILE_SIZE / 2;
-            const ty = reg.cityY * TILE_SIZE + TILE_SIZE / 2;
+            const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; 
+            const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
             
-            // ГОРОД (Тёмный квадрат) - теперь рисуется по фиксированным координатам
-            ctx.fillStyle = 'rgba(10, 10, 10, 0.9)';
-            ctx.fillRect(tx - 4, ty - 4, 8, 8);
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 / camera.zoom;
-            ctx.strokeRect(tx - 4, ty - 4, 8, 8);
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.9)'; ctx.fillRect(tx - 4, ty - 4, 8, 8);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 / camera.zoom; ctx.strokeRect(tx - 4, ty - 4, 8, 8);
 
-            // Название над городом
-            ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.fillText(reg.name, tx, ty - 10 / camera.zoom);
+            ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.textAlign = 'center';
+            ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2 / camera.zoom;
+            ctx.strokeText(reg.name, tx, ty - (10 / camera.zoom)); ctx.fillText(reg.name, tx, ty - (10 / camera.zoom));
         }
     }
 
-    // ЛИНИЯ ЛАССО
     if (isDrawingRegion && lassoPoints.length > 0) {
-        ctx.beginPath();
-        ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+        ctx.beginPath(); ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
         for(let i=1; i<lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
-        ctx.lineTo(lassoPoints[0].x, lassoPoints[0].y); // Замыкаем
+        ctx.lineTo(lassoPoints[0].x, lassoPoints[0].y); 
         ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2 / camera.zoom; ctx.stroke();
     }
 
@@ -320,7 +285,7 @@ for (const rId in regions) {
     }
 
     if (isSelecting) {
-        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1;
+        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1 / camera.zoom;
         const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
         ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
     }
@@ -332,7 +297,9 @@ for (const rId in regions) {
 canvas.addEventListener('wheel', (e) => {
     e.preventDefault();
     const zoomAmount = 0.1; const oldZoom = camera.zoom;
-    camera.zoom = e.deltaY > 0 ? Math.max(0.5, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount);
+    const minZoom = Math.max(canvas.width / WORLD_WIDTH, canvas.height / WORLD_HEIGHT);
+    camera.zoom = e.deltaY > 0 ? Math.max(minZoom, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount);
+    
     const rect = canvas.getBoundingClientRect();
     const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
@@ -343,15 +310,8 @@ function getWorldCoords(e) {
     const rect = canvas.getBoundingClientRect();
     const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
     const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    
-    let wx = (canvasMouseX - camera.x) / camera.zoom;
-    let wy = (canvasMouseY - camera.y) / camera.zoom;
-
-    // ИСПРАВЛЕНИЕ: Клик никогда не выйдет за границы 1920x1080
-    return { 
-        x: Math.max(2, Math.min(WORLD_WIDTH - 2, wx)), 
-        y: Math.max(2, Math.min(WORLD_HEIGHT - 2, wy)) 
-    };
+    let wx = (canvasMouseX - camera.x) / camera.zoom; let wy = (canvasMouseY - camera.y) / camera.zoom;
+    return { x: Math.max(0, Math.min(WORLD_WIDTH, wx)), y: Math.max(0, Math.min(WORLD_HEIGHT, wy)) };
 }
 
 canvas.addEventListener('mousedown', (e) => { 
@@ -360,10 +320,7 @@ canvas.addEventListener('mousedown', (e) => {
 
     if (e.button === 0) {
         if (!isSpawned) { socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) }); return; }
-        
-        // НАЧАЛО ЛАССО
         if (isDrawingRegion) { lassoPoints = [world]; return; }
-
         isSelecting = true; selectionBox.startX = world.x; selectionBox.startY = world.y; selectionBox.endX = world.x; selectionBox.endY = world.y;
     }
     
@@ -374,47 +331,42 @@ canvas.addEventListener('mousemove', (e) => {
     if (isPanning) { camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y); lastMouse = {x: e.clientX, y: e.clientY}; return; }
     const world = getWorldCoords(e);
     if (isSelecting) { selectionBox.endX = world.x; selectionBox.endY = world.y;
-    } else if (isDrawingRegion && e.buttons === 1) { 
-        // ДОБАВЛЯЕМ ТОЧКИ В ЛАССО
-        lassoPoints.push(world); 
-    }
+    } else if (isDrawingRegion && e.buttons === 1) { lassoPoints.push(world); }
 });
-
 
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
     
-    // --- ЛАССО ---
-    if (isDrawingRegion && lassoPoints.length > 2) {
-        let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
-        let poly = lassoPoints.map(p => {
-            if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
-            if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
-            return [p.x, p.y];
-        });
+    if (isDrawingRegion) {
+        if (lassoPoints.length > 2) {
+            let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
+            let poly = lassoPoints.map(p => {
+                if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
+                if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
+                return [p.x, p.y];
+            });
 
-        let tilesInside = [];
-        for(let c = Math.max(0, Math.floor(minX/TILE_SIZE)); c <= Math.min(WORLD_WIDTH/TILE_SIZE-1, Math.ceil(maxX/TILE_SIZE)); c++) {
-            for(let r = Math.max(0, Math.floor(minY/TILE_SIZE)); r <= Math.min(WORLD_HEIGHT/TILE_SIZE-1, Math.ceil(maxY/TILE_SIZE)); r++) {
-                if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
+            let tilesInside = [];
+            for(let c = Math.max(0, Math.floor(minX/TILE_SIZE)); c <= Math.min(WORLD_WIDTH/TILE_SIZE-1, Math.ceil(maxX/TILE_SIZE)); c++) {
+                for(let r = Math.max(0, Math.floor(minY/TILE_SIZE)); r <= Math.min(WORLD_HEIGHT/TILE_SIZE-1, Math.ceil(maxY/TILE_SIZE)); r++) {
+                    if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
+                }
+            }
+
+            if (tilesInside.length > 0) {
+                const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`);
+                if (name !== null) {
+                    socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" });
+                    showMsg("Регион сформирован!");
+                }
             }
         }
-
-        if (tilesInside.length > 0) {
-            const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`);
-            if (name !== null) {
-                socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" });
-            }
-        }
-        isDrawingRegion = false; lassoPoints = []; 
-        document.getElementById('drawRegionBtn').innerText = "Новый регион (Обвести)";
+        isDrawingRegion = false; lassoPoints = []; document.getElementById('drawRegionBtn').innerText = "Новый регион (Обвести)";
         return;
     }
 
-    // --- ВЫДЕЛЕНИЕ ---
     if (e.button === 0 && isSelecting) {
-        isSelecting = false; 
-        const world = getWorldCoords(e);
+        isSelecting = false; const world = getWorldCoords(e);
         const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x);
         const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
         const isClick = (maxX - minX < 5 && maxY - minY < 5);
@@ -436,22 +388,17 @@ canvas.addEventListener('mouseup', (e) => {
             if (territory[key] && territory[key].owner === myId) {
                 clickedRegionId = territory[key].regionId; updateRegionPanel();
             } else { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
-        }
+        } else if (!isClick || selectedArmies.length > 0) { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
     }
 });
 
-// ИСПРАВЛЕННЫЙ updateRegionPanel (чтобы не показывал "Столицу" везде)
 function updateRegionPanel() {
-    if (!clickedRegionId || !regions[clickedRegionId]) {
-        document.getElementById('regionPanel').style.display = 'none';
-        return;
-    }
-    
+    if (!clickedRegionId || !regions[clickedRegionId]) return;
     const reg = regions[clickedRegionId];
     
     document.getElementById('regionPanel').style.display = 'block';
-    document.getElementById('regName').innerText = reg.name; // БЕРЕМ ИМЯ ИЗ ОБЪЕКТА РЕГИОНА
-    document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Ничейный";
+    document.getElementById('regName').innerText = reg.name;
+    document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
     
     document.getElementById('regLevel').innerText = reg.level;
     document.getElementById('regIncome').innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
@@ -465,8 +412,8 @@ function updateRegionPanel() {
     
     if (reg.owner === myId) {
         btnEcon.style.display = 'block'; btnDef.style.display = 'block';
+        document.getElementById('renameRegBtn').style.display = 'block';
         
-        // Кнопка Экономики
         const upgradeCost = reg.cells * reg.level * 50;
         if (reg.level >= 10) { btnEcon.innerText = "ВВП Макс"; btnEcon.disabled = true; btnEcon.style.background = '#7f8c8d'; } 
         else {
@@ -475,14 +422,15 @@ function updateRegionPanel() {
             btnEcon.style.background = btnEcon.disabled ? '#7f8c8d' : '#27ae60';
         }
 
-        // Кнопка Обороны
-        const defCostDol = reg.cells * (defLevel + 1) * 20;
-        const defCostMil = reg.cells * (defLevel + 1) * 10;
+        const defCostDol = reg.cells * (defLevel + 1) * 20; const defCostMil = reg.cells * (defLevel + 1) * 10;
         if (defLevel >= 10) { btnDef.innerText = "Защита Макс"; btnDef.disabled = true; btnDef.style.background = '#7f8c8d'; }
         else {
             btnDef.innerText = `Улучшить Защиту (${defCostDol.toLocaleString()} $, ${defCostMil.toLocaleString()} ⚔️)`;
             btnDef.disabled = (countries[myId].dollars < defCostDol || countries[myId].military < defCostMil);
             btnDef.style.background = btnDef.disabled ? '#7f8c8d' : '#c0392b';
         }
-    } else { btnEcon.style.display = 'none'; btnDef.style.display = 'none'; }
+    } else { 
+        btnEcon.style.display = 'none'; btnDef.style.display = 'none'; 
+        document.getElementById('renameRegBtn').style.display = 'none';
+    }
 }
