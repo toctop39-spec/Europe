@@ -7,6 +7,7 @@ const server = http.createServer(app);
 const io = new Server(server);
 app.use(express.static('public'));
 
+// --- ГЛОБАЛЬНЫЕ ДАННЫЕ ---
 let countries = {}; 
 let playerSockets = {}; 
 let territory = {}; 
@@ -49,7 +50,7 @@ io.on('connection', (socket) => {
         country.isSpawned = true;
         const startRegionId = `reg_${cId}_cap`;
         
-        // СТАВКА ГОРОДА
+        // СТАВКА ГОРОДА (Никогда не двигается)
         regions[startRegionId] = { 
             name: "Столица", owner: cId, cells: 0, level: 1, defLevel: 0,
             cityX: data.x, cityY: data.y 
@@ -71,11 +72,11 @@ io.on('connection', (socket) => {
         io.emit('updateMap', { countries, territory, regions });
     });
 
-  socket.on('lassoRegion', (data) => {
+    socket.on('lassoRegion', (data) => {
         const cId = playerSockets[socket.id];
         if (!cId || !data.tiles.length) return;
 
-        // 1. Сначала отбираем ТОЛЬКО те клетки внутри лассо, которые реально принадлежат тебе
+        // 1. Отбираем только те клетки внутри лассо, которые реально принадлежат игроку
         let ownedTiles = [];
         data.tiles.forEach(key => {
             const cell = territory[key];
@@ -84,12 +85,10 @@ io.on('connection', (socket) => {
             }
         });
 
-        // Если в лассо не попало ни одной твоей клетки — отмена
-        if (ownedTiles.length === 0) return; 
+        if (ownedTiles.length === 0) return; // Если обвели чужое или воду - отмена
 
         if (!regions[data.newRegionId]) {
             let sumX = 0, sumY = 0;
-            // 2. Считаем центр МАССЫ ИМЕННО ТВОЕГО РЕГИОНА, а не нарисованного круга
             ownedTiles.forEach(key => {
                 const [x, y] = key.split('_').map(Number);
                 sumX += x; sumY += y;
@@ -97,7 +96,7 @@ io.on('connection', (socket) => {
             const avgX = Math.floor(sumX / ownedTiles.length);
             const avgY = Math.floor(sumY / ownedTiles.length);
 
-            // 3. Ищем ближайшую клетку к этому центру, чтобы город точно стоял на твоей земле
+            // Ищем ближайшую НАШУ клетку к центру выделения
             let bestKey = ownedTiles[0];
             let minDist = Infinity;
             ownedTiles.forEach(key => {
@@ -107,14 +106,12 @@ io.on('connection', (socket) => {
             });
             const [fX, fY] = bestKey.split('_').map(Number);
 
-            // Создаем регион со столицей в правильном месте
             regions[data.newRegionId] = { 
-                name: data.name, owner: cId, cells: 0, level: 1, defLevel: 0,
+                name: data.name || "Новый регион", owner: cId, cells: 0, level: 1, defLevel: 0,
                 cityX: fX, cityY: fY 
             };
         }
 
-        // 4. Привязываем клетки к новому региону
         ownedTiles.forEach(key => {
             const cell = territory[key];
             if (regions[cell.regionId]) regions[cell.regionId].cells--;
@@ -125,21 +122,10 @@ io.on('connection', (socket) => {
         io.emit('syncTerritory', { territory, regions });
     });
 
-        data.tiles.forEach(key => {
-            const cell = territory[key];
-            if (cell && cell.owner === cId) {
-                if (regions[cell.regionId]) regions[cell.regionId].cells--;
-                cell.regionId = data.newRegionId;
-                regions[data.newRegionId].cells++;
-            }
-        });
-        io.emit('syncTerritory', { territory, regions });
-    });
-
     socket.on('renameRegion', (data) => {
         const cId = playerSockets[socket.id];
         const reg = regions[data.regionId];
-        if (reg && reg.owner === cId) {
+        if (reg && reg.owner === cId && data.newName && data.newName.trim().length > 0) {
             reg.name = data.newName.substring(0, 20);
             io.emit('syncTerritory', { territory, regions });
         }
@@ -180,7 +166,11 @@ io.on('connection', (socket) => {
         if (reg && reg.owner === cId && countries[cId].military >= data.amount) {
             countries[cId].military -= data.amount;
             const id = Math.random().toString(36).substr(2, 9);
-            armies[id] = { id, owner: cId, count: parseInt(data.amount), x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: 0.3 };
+            armies[id] = { 
+                id, owner: cId, count: parseInt(data.amount), 
+                x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, 
+                targetX: null, targetY: null, speed: 0.3 
+            };
             io.emit('syncArmies', armies); io.emit('updateResources', countries);
         }
     });
@@ -241,11 +231,14 @@ setInterval(() => {
             const b = armies[armyIds[j]];
             const d = Math.hypot(a.x - b.x, a.y - b.y);
             if (d < COLLISION_RADIUS * 2) {
-                if (a.owner !== b.owner) { a.targets.push(b.id); b.targets.push(a.id); a.targetX = null; b.targetX = null; }
-                else {
+                if (a.owner !== b.owner) { 
+                    a.targets.push(b.id); b.targets.push(a.id); 
+                    a.targetX = null; b.targetX = null; 
+                } else {
                     const p = (COLLISION_RADIUS * 2 - d) * 0.5;
                     const ang = Math.atan2(a.y-b.y, a.x-b.x);
-                    a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p;
+                    a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; 
+                    b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p;
                     stateChanged = true;
                 }
             }
@@ -263,8 +256,13 @@ setInterval(() => {
         
         if (!a.targets.length && a.targetX !== null) {
             const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
-            if (d > a.speed) { a.x += ((a.targetX-a.x)/d)*a.speed; a.y += ((a.targetY-a.y)/d)*a.speed; stateChanged = true; }
-            else { a.targetX = null; }
+            if (d > a.speed) { 
+                a.x += ((a.targetX-a.x)/d)*a.speed; 
+                a.y += ((a.targetY-a.y)/d)*a.speed; 
+                stateChanged = true; 
+            } else { 
+                a.targetX = null; 
+            }
 
             if (!cell || cell.owner !== a.owner) {
                 if (cell && countries[cell.owner]) {
@@ -329,7 +327,6 @@ setInterval(() => {
 
     if (!mapChangedForCauldrons) return;
     
-    // Карта армий
     let armyLocs = {};
     for(let id in armies) {
         let k = `${Math.floor(armies[id].x/TILE_SIZE)}_${Math.floor(armies[id].y/TILE_SIZE)}`;
