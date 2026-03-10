@@ -43,13 +43,16 @@
         <p id="systemMsg" class="sys-msg">Управление камерой: W A S D</p>
     </div>
 
-    <div id="regionPanel" style="display: none;">
-        <h3 id="regName">Регион</h3>
+<div id="regionPanel" style="display: none;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+            <h3 id="regName" style="margin: 0;">Регион</h3>
+            <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; font-size: 10px;">✏️</button>
+        </div>
         <p>Принадлежит: <span id="regOwner"></span></p>
         <p>Экономика: ур. <span id="regLevel">1</span>/10 (<span id="regIncome"></span> $/с)</p>
         <p>Оборона: ур. <span id="regDefLevel">0</span>/10 (Урон: <span id="regDefDmg">0</span>/с)</p>
         
-        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 5px;">Улучшить ВВП (<span id="upgradeCost">0</span> $)</button>
+        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 5px;">Улучшить ВВП</button>
         <button id="upgradeDefBtn" class="btn-civil" style="background:#c0392b; margin-bottom: 15px;">Улучшить Защиту</button>
         
         <hr style="border-color: #444; margin: 10px 0;">
