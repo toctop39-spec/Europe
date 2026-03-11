@@ -14,6 +14,9 @@ let armies = {};
 let regions = {}; 
 let pendingDeployments = [];
 
+// ОПТИМИЗАЦИЯ СЕТИ: Накапливаем клетки и отправляем их раз в 200мс, а не 30 раз в секунду
+let batchedCellUpdates = {};
+
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
@@ -133,14 +136,11 @@ io.on('connection', (socket) => {
     socket.on('deployArmy', (data) => {
         const cId = playerSockets[socket.id]; const reg = regions[data.regionId];
         if (reg && reg.owner === cId) {
-            
-            // ПРОВЕРКА: Идет ли уже мобилизация в этом регионе?
             const isAlreadyDeploying = pendingDeployments.some(dep => dep.regionId === data.regionId);
             if (isAlreadyDeploying) {
-                socket.emit('newsEvent', { title: "ОТМЕНА ПРИКАЗА", text: `В регионе ${reg.name} уже идет мобилизация. Дождитесь её окончания.` });
+                socket.emit('newsEvent', { title: "ОТМЕНА ПРИКАЗА", text: `В регионе ${reg.name} уже идет мобилизация.` });
                 return;
             }
-
             if (countries[cId].military >= data.amount) {
                 countries[cId].military -= data.amount;
                 pendingDeployments.push({ owner: cId, amount: parseInt(data.amount), regionId: data.regionId, readyAt: Date.now() + 15000 });
@@ -172,10 +172,17 @@ io.on('connection', (socket) => {
     });
 });
 
+// Отправка накопленных клеток раз в 200мс (убивает лаги интерфейса)
+setInterval(() => {
+    if (Object.keys(batchedCellUpdates).length > 0) {
+        io.emit('batchCellUpdate', { cells: batchedCellUpdates, regions, countries });
+        batchedCellUpdates = {}; // Очищаем после отправки
+    }
+}, 200);
+
 // --- ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ (30 FPS) ---
 setInterval(() => {
     let stateChanged = false; const now = Date.now();
-    let batchedCellUpdates = {}; // ДЛЯ ОПТИМИЗАЦИИ (БАТЧИНГ)
 
     for (let i = pendingDeployments.length - 1; i >= 0; i--) {
         const dep = pendingDeployments[i];
@@ -195,6 +202,7 @@ setInterval(() => {
     const armyIds = Object.keys(armies);
     armyIds.forEach(id => { armies[id].targets = []; armies[id].dmg = 0; });
 
+    // Осада городов
     for (const rId in regions) {
         const reg = regions[rId]; let beingSiegedBy = null;
         for (let i = 0; i < armyIds.length; i++) {
@@ -212,6 +220,7 @@ setInterval(() => {
                         if (countries[oldOwner]) countries[oldOwner].cells--;
                         territory[k].owner = beingSiegedBy; territory[k].captureProgress = 0;
                         if (countries[beingSiegedBy]) countries[beingSiegedBy].cells++;
+                        batchedCellUpdates[k] = territory[k]; // В батч
                     }
                 }
                 io.emit('newsEvent', { title: "ПАДЕНИЕ РЕГИОНА", text: `Регион ${reg.name} захвачен войсками ${countries[beingSiegedBy].name}!` });
@@ -220,6 +229,7 @@ setInterval(() => {
         } else { reg.siegeProgress = 0; }
     }
 
+    // Линия фронта и движение
     armyIds.forEach(id => {
         const a = armies[id];
         const cellX = Math.floor(a.x/TILE_SIZE); const cellY = Math.floor(a.y/TILE_SIZE);
@@ -246,8 +256,7 @@ setInterval(() => {
                 countries[a.owner].cells++;
                 if (regions[newRegId]) regions[newRegId].cells++;
                 
-                // ОПТИМИЗАЦИЯ: Добавляем в батч вместо моментальной отправки
-                batchedCellUpdates[cellKey] = territory[cellKey];
+                batchedCellUpdates[cellKey] = territory[cellKey]; // В батч, убираем лаги!
                 mapChangedForCauldrons = true;
             }
         }
@@ -260,6 +269,7 @@ setInterval(() => {
         }
     });
 
+    // Боевка армий
     for (let i = 0; i < armyIds.length; i++) {
         const a = armies[armyIds[i]];
         for (let j = i + 1; j < armyIds.length; j++) {
@@ -285,14 +295,10 @@ setInterval(() => {
         if (armies[id].count <= 0) delete armies[id];
     });
 
-    // ОТПРАВКА БАТЧА КЛЕТОК (Убирает зависания)
-    if (Object.keys(batchedCellUpdates).length > 0) {
-        io.emit('batchCellUpdate', { cells: batchedCellUpdates, regions, countries });
-    }
-
     if (stateChanged) io.emit('syncArmies', armies);
 }, 33);
 
+// --- ИСПРАВЛЕННЫЕ АСИНХРОННЫЕ КОТЛЫ ---
 const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
 const total = gridW * gridH;
 let vstd = new Uint8Array(total); let qX = new Int32Array(total); let qY = new Int32Array(total);
@@ -300,7 +306,7 @@ let sX = 0, sY = 0, fillQ = [];
 
 setInterval(() => {
     if (fillQ.length) {
-        let btch = fillQ.splice(0, Math.max(20, Math.floor(fillQ.length/20))); let updates = {};
+        let btch = fillQ.splice(0, Math.max(20, Math.floor(fillQ.length/20)));
         btch.forEach(c => {
             const k = `${c.x}_${c.y}`; const old = territory[k] ? territory[k].owner : null;
             if (old !== c.owner) {
@@ -309,13 +315,15 @@ setInterval(() => {
                 territory[k] = { owner: c.owner, regionId: c.regId };
                 if (countries[c.owner]) countries[c.owner].cells++;
                 if (regions[c.regId]) regions[c.regId].cells++;
-                updates[k] = territory[k];
+                batchedCellUpdates[k] = territory[k]; // В батч!
             }
         });
-        if (Object.keys(updates).length) io.emit('batchCellUpdate', { cells: updates, regions, countries }); return;
+        return;
     }
+    
     if (!mapChangedForCauldrons) return;
     let armyLocs = {}; for(let id in armies) { let k = `${Math.floor(armies[id].x/TILE_SIZE)}_${Math.floor(armies[id].y/TILE_SIZE)}`; if(!armyLocs[k]) armyLocs[k] = []; armyLocs[k].push(armies[id].owner); }
+    
     let checked = 0;
     while (checked < 3000) {
         let idx = sY * gridW + sX;
@@ -324,22 +332,32 @@ setInterval(() => {
             const startOwner = territory[`${sX}_${sY}`] ? territory[`${sX}_${sY}`].owner : null;
             let hasDefendingArmy = false;
             qX[t] = sX; qY[t] = sY; t++; vstd[idx] = 1;
+            
             while(h < t) {
                 let cx = qX[h]; let cy = qY[h]; h++; comp.push({x: cx, y: cy});
+                
+                // ИСПРАВЛЕНИЕ: Ограничение размера котла. Огромные материки больше не исчезают.
+                if (comp.length > 500) edge = true; 
+                
                 if (cx <= 0 || cx >= gridW-1 || cy <= 0 || cy >= gridH-1) edge = true;
                 if (startOwner !== null && armyLocs[`${cx}_${cy}`] && armyLocs[`${cx}_${cy}`].includes(startOwner)) hasDefendingArmy = true;
+                
                 [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx, dy]) => {
                     let nx = cx + dx, ny = cy + dy;
                     if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
                         let nKey = `${nx}_${ny}`; let nOwn = territory[nKey] ? territory[nKey].owner : null;
-                        if (nOwn === startOwner) { let nIdx = ny * gridW + nx; if (vstd[nIdx] === 0) { vstd[nIdx] = 1; qX[t] = nx; qY[t] = ny; t++; }
-                        } else if (nOwn !== null) owners.add(nOwn);
+                        if (nOwn === startOwner) { 
+                            let nIdx = ny * gridW + nx; if (vstd[nIdx] === 0) { vstd[nIdx] = 1; qX[t] = nx; qY[t] = ny; t++; }
+                        } else {
+                            // ИСПРАВЛЕНИЕ: Нейтральные земли считаются границей. Нельзя "окружить" прижав к пустыне.
+                            owners.add(nOwn === null ? 'neutral' : nOwn); 
+                        }
                     }
                 });
             }
             if (!edge && owners.size === 1 && !hasDefendingArmy) {
                 let winId = Array.from(owners)[0];
-                if (winId !== startOwner) {
+                if (winId !== startOwner && winId !== 'neutral') { // 'neutral' не может захватывать котлы
                     let rId = `reg_${winId}_cap`; if (!regions[rId]) regions[rId] = { name: "Столица", owner: winId, cells: 0, level: 1, defLevel: 0 };
                     comp.reverse().forEach(c => fillQ.push({...c, owner: winId, regId: rId})); break;
                 }
