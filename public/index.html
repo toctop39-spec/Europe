@@ -6,38 +6,43 @@
     <title>Global Strategy Engine - HOI4 Edition</title>
     <link rel="stylesheet" href="style.css">
     <style>
-        /* Дополнительные стили для закоса под HOI4 */
-        body { background: #111; color: #ddd; font-family: 'Courier New', Courier, monospace; }
-        #topBar { background: linear-gradient(to bottom, #333, #1a1a1a); border-bottom: 2px solid #555; padding: 5px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-family: 'Arial', sans-serif; }
+        body { background: #111; color: #ddd; font-family: 'Courier New', Courier, monospace; margin: 0; overflow: hidden; user-select: none; }
+        canvas { display: block; }
+        
+        #topBar { background: linear-gradient(to bottom, #333, #1a1a1a); border-bottom: 2px solid #555; padding: 5px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-family: 'Arial', sans-serif; position: absolute; width: 100%; box-sizing: border-box; z-index: 10; }
         .stat-box { background: rgba(0,0,0,0.5); border: 1px solid #444; padding: 4px 8px; border-radius: 3px; display: flex; align-items: center; gap: 5px; box-shadow: inset 0 0 5px rgba(0,0,0,0.8); }
         .stat-icon { font-size: 14px; }
         
-        #mainMenuUI { position: absolute; top: 50px; left: 10px; display: flex; gap: 5px; z-index: 10; }
-        .hoi-tab { background: #2c3e50; border: 1px solid #555; color: white; padding: 8px 12px; cursor: pointer; font-weight: bold; text-transform: uppercase; font-size: 11px; border-radius: 3px; transition: 0.2s; }
-        .hoi-tab:hover { background: #34495e; }
+        #setupScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .panel { background: #1a1a1a; padding: 30px; border-radius: 5px; border: 1px solid #444; text-align: center; width: 350px; font-family: 'Arial', sans-serif; }
+        .panel input, .panel select { padding: 10px; width: 90%; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 3px; }
+        .panel button { padding: 12px; width: 100%; background: #2c3e50; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; border-radius: 3px; }
+        .panel button:hover { background: #34495e; }
 
-        #newsOverlay { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #ecf0f1; color: #2c3e50; padding: 20px; border: 4px solid #34495e; border-radius: 5px; width: 400px; text-align: center; z-index: 1000; box-shadow: 0 10px 30px rgba(0,0,0,0.8); font-family: 'Times New Roman', serif; }
+        #controlPanel { position: absolute; left: 15px; top: 60px; width: 220px; background: rgba(20,20,20,0.9); border: 1px solid #333; padding: 15px; z-index: 10; font-family: 'Arial', sans-serif; }
+        .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
+        .btn-military { width: 100%; padding: 8px; background: #c0392b; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .btn-disband { width: 100%; padding: 8px; background: #8e44ad; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
+
+        #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; font-family: 'Arial', sans-serif; }
+        #newsOverlay { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #ecf0f1; color: #2c3e50; padding: 20px; border: 4px solid #34495e; width: 400px; text-align: center; z-index: 1000; font-family: 'Times New Roman', serif; }
         .news-title { font-size: 24px; font-weight: bold; border-bottom: 2px solid #2c3e50; margin-bottom: 10px; padding-bottom: 5px; }
-        .news-btn { background: #34495e; color: white; border: none; padding: 10px 20px; margin-top: 15px; cursor: pointer; font-family: 'Times New Roman', serif; font-size: 16px; }
     </style>
 </head>
-<body oncontextmenu="return false;">
+<body>
     <div id="setupScreen">
         <div class="panel">
-            <h2>Выбор государства</h2>
-            <select id="countrySelect" style="width: 100%; padding: 10px; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555;">
-                <option value="new">-- Основать новую страну --</option>
+            <h2>Основать государство</h2>
+            <select id="countrySelect">
+                <option value="new">-- Новая страна --</option>
             </select>
-            
             <div id="newCountryForm">
                 <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
-                <br><br>
-                <label style="display: block; margin-bottom: 5px; font-size: 12px;">Флаг (Картинка):</label>
-                <input type="file" id="countryFlagFile" accept="image/*" style="width: 100%; background: #222; color: white; border: 1px solid #555; padding: 5px; margin-bottom: 15px;">
-                <label style="font-size: 12px;">Цвет на карте:</label>
+                <input type="file" id="countryFlagFile" accept="image/*">
+                <label style="display:block; font-size: 12px; margin-bottom: 5px;">Цвет границ:</label>
                 <input type="color" id="countryColor" value="#2b5e8a">
             </div>
-            <button id="joinBtn">Войти в игру</button>
+            <button id="joinBtn">Начать игру</button>
         </div>
     </div>
 
@@ -47,52 +52,41 @@
             <span id="myName" style="font-weight: bold; font-size: 16px;"></span>
         </div>
         <div style="display: flex; gap: 10px;">
-            <div class="stat-box" title="Стабильность"><span class="stat-icon">🕊️</span> 100%</div>
             <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
-            <div class="stat-box" title="Свободные рекруты (10% от населения)"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
-            <div class="stat-box" title="Деньги / Пром. мощность"><span class="stat-icon">🏭</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>)</div>
-            <div class="stat-box" title="Электричество"><span class="stat-icon">⚡</span> 100%</div>
-            <div class="stat-box" title="Водоснабжение"><span class="stat-icon">💧</span> 100%</div>
-            <div class="stat-box" title="Инфраструктура/Дороги"><span class="stat-icon">🛣️</span> Ур. 1</div>
+            <div class="stat-box" title="Рекруты (Макс 10% населения)"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
+            <div class="stat-box" title="Экономика"><span class="stat-icon">🏭</span> <span id="myDollars">0</span>$ (<span id="myIncome">0</span>/с)</div>
         </div>
     </div>
 
-    <div id="mainMenuUI" style="display: none;">
-        <button class="hoi-tab">Исследования</button>
-        <button class="hoi-tab">Дипломатия</button>
-        <button class="hoi-tab">Производство (ПВО/Ракеты)</button>
-        <button class="hoi-tab">Строительство</button>
-    </div>
-
-    <div id="controlPanel" style="display: none; top: 100px;">
-        <button id="drawRegionBtn" class="btn-civil">Новый регион (Обвести)</button>
+    <div id="controlPanel" style="display: none;">
+        <button id="drawRegionBtn" class="btn-civil">Сформировать регион</button>
         <button id="disbandBtn" class="btn-disband" style="display: none;">Распустить армию</button>
-        <p id="systemMsg" class="sys-msg">Камера: W A S D</p>
+        <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">Камера: W A S D</p>
     </div>
 
-    <div id="regionPanel" style="display: none; top: 100px;">
+    <div id="regionPanel" style="display: none;">
         <div style="display: flex; align-items: center; justify-content: space-between;">
             <h3 id="regName" style="margin: 0;">Регион</h3>
-            <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; font-size: 10px; padding: 2px 5px;">✏️</button>
+            <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; padding: 2px 5px;">✏️</button>
         </div>
-        <p>Владелец: <span id="regOwner"></span></p>
-        <p>Инфраструктура: ур. <span id="regLevel">1</span>/10 (<span id="regIncome"></span> 🏭/с)</p>
-        <p>Оборона (ПВО/ДОТы): ур. <span id="regDefLevel">0</span>/10</p>
+        <p style="font-size: 13px; color: #ccc;">Владелец: <span id="regOwner"></span></p>
+        <p style="font-size: 13px;">Инфраструктура: ур. <span id="regLevel">1</span>/10 (<span id="regIncome"></span> $/с)</p>
+        <p style="font-size: 13px;">Оборона (Укрепления): ур. <span id="regDefLevel">0</span>/10</p>
         
-        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; margin-bottom: 5px;">Улучшить Инфраструктуру</button>
-        <button id="upgradeDefBtn" class="btn-civil" style="background:#c0392b; margin-bottom: 15px;">Укрепить Оборону</button>
+        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; font-size: 12px;">Улучшить Инфраструктуру</button>
+        <button id="upgradeDefBtn" class="btn-civil" style="background:#c0392b; font-size: 12px; margin-bottom: 15px;">Укрепить Оборону</button>
         
-        <hr style="border-color: #444; margin: 10px 0;">
+        <hr style="border-color: #444;">
+        <p style="font-size: 12px; color: #aaa;">Мобилизация (15 сек):</p>
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
         <button id="deployBtn" class="btn-military">Развернуть дивизию</button>
-        <button id="closeRegBtn" class="btn-close">Закрыть</button>
+        <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
     </div>
 
     <div id="newsOverlay">
         <div class="news-title" id="newsTitle">СРОЧНЫЕ НОВОСТИ</div>
-        <img src="" id="newsImg" style="width:100%; height:150px; object-fit:cover; display:none; margin-bottom:10px; border: 2px solid #333;">
-        <p id="newsText">Мир погружается в хаос. Начинается новая эпоха передела границ.</p>
-        <button class="news-btn" onclick="document.getElementById('newsOverlay').style.display='none'">Очень интересно...</button>
+        <p id="newsText" style="font-size: 16px; margin-bottom: 20px;">Текст новости.</p>
+        <button onclick="document.getElementById('newsOverlay').style.display='none'" style="background: #34495e; color: white; border: none; padding: 10px 20px; cursor: pointer; font-size: 16px;">Принять</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
