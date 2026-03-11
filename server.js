@@ -132,11 +132,21 @@ io.on('connection', (socket) => {
 
     socket.on('deployArmy', (data) => {
         const cId = playerSockets[socket.id]; const reg = regions[data.regionId];
-        if (reg && reg.owner === cId && countries[cId].military >= data.amount) {
-            countries[cId].military -= data.amount;
-            pendingDeployments.push({ owner: cId, amount: parseInt(data.amount), regionId: data.regionId, readyAt: Date.now() + 15000 });
-            io.emit('updateResources', countries);
-            socket.emit('newsEvent', { title: "МОБИЛИЗАЦИЯ", text: `Дивизия сформируется в регионе ${reg.name} через 15 сек.` });
+        if (reg && reg.owner === cId) {
+            
+            // ПРОВЕРКА: Идет ли уже мобилизация в этом регионе?
+            const isAlreadyDeploying = pendingDeployments.some(dep => dep.regionId === data.regionId);
+            if (isAlreadyDeploying) {
+                socket.emit('newsEvent', { title: "ОТМЕНА ПРИКАЗА", text: `В регионе ${reg.name} уже идет мобилизация. Дождитесь её окончания.` });
+                return;
+            }
+
+            if (countries[cId].military >= data.amount) {
+                countries[cId].military -= data.amount;
+                pendingDeployments.push({ owner: cId, amount: parseInt(data.amount), regionId: data.regionId, readyAt: Date.now() + 15000 });
+                io.emit('updateResources', countries);
+                socket.emit('newsEvent', { title: "МОБИЛИЗАЦИЯ", text: `Дивизия сформируется в регионе ${reg.name} через 15 сек.` });
+            }
         }
     });
 
@@ -162,8 +172,10 @@ io.on('connection', (socket) => {
     });
 });
 
+// --- ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ (30 FPS) ---
 setInterval(() => {
     let stateChanged = false; const now = Date.now();
+    let batchedCellUpdates = {}; // ДЛЯ ОПТИМИЗАЦИИ (БАТЧИНГ)
 
     for (let i = pendingDeployments.length - 1; i >= 0; i--) {
         const dep = pendingDeployments[i];
@@ -216,17 +228,11 @@ setInterval(() => {
         
         let currentSpeed = a.speed;
 
-        // ИСПРАВЛЕНИЕ: Теперь учитываем нейтральные клетки (!cell)
         if (!cell || cell.owner !== a.owner) {
             currentSpeed = 0.05; 
+            if (cell && regions[cell.regionId]) a.dmg += ((regions[cell.regionId].defLevel || 0) * 50) / 30; 
             
-            if (cell && regions[cell.regionId]) {
-                a.dmg += ((regions[cell.regionId].defLevel || 0) * 50) / 30; 
-            }
-
-            // Создаем клетку в базе, если она была пустой
             if (!territory[cellKey]) territory[cellKey] = { owner: null, captureProgress: 0 };
-            
             territory[cellKey].captureProgress = (territory[cellKey].captureProgress || 0) + 1;
             
             if (territory[cellKey].captureProgress > 20) { 
@@ -239,7 +245,9 @@ setInterval(() => {
                 
                 countries[a.owner].cells++;
                 if (regions[newRegId]) regions[newRegId].cells++;
-                io.emit('cellUpdate', { key: cellKey, cell: territory[cellKey], regions, countries });
+                
+                // ОПТИМИЗАЦИЯ: Добавляем в батч вместо моментальной отправки
+                batchedCellUpdates[cellKey] = territory[cellKey];
                 mapChangedForCauldrons = true;
             }
         }
@@ -276,6 +284,11 @@ setInterval(() => {
         if (armies[id].dmg > 0) { armies[id].count -= armies[id].dmg; stateChanged = true; }
         if (armies[id].count <= 0) delete armies[id];
     });
+
+    // ОТПРАВКА БАТЧА КЛЕТОК (Убирает зависания)
+    if (Object.keys(batchedCellUpdates).length > 0) {
+        io.emit('batchCellUpdate', { cells: batchedCellUpdates, regions, countries });
+    }
 
     if (stateChanged) io.emit('syncArmies', armies);
 }, 33);
