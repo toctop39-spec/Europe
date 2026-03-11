@@ -4,6 +4,7 @@ const ctx = canvas.getContext('2d');
 
 const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
+const KM_PER_TILE = 25; // Условные 25 км² на 1 клетку
 
 canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 
@@ -76,7 +77,7 @@ socket.on('newsEvent', (data) => {
     if (t && txt && overlay) { t.innerText = data.title; txt.innerText = data.text; overlay.style.display = 'block'; }
 });
 
-document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); showMsg(`Приказ отдан!`); } });
+document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); } });
 document.getElementById('disbandBtn')?.addEventListener('click', () => { if (selectedArmies.length > 0) { socket.emit('disbandArmies', selectedArmies); showMsg("Дивизии распущены."); selectedArmies = []; document.getElementById('disbandBtn').style.display = 'none'; } });
 document.getElementById('upgradeBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
 document.getElementById('upgradeDefBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeDefense', clickedRegionId); });
@@ -121,6 +122,10 @@ function updateUI() {
     if (myId && countries[myId]) {
         const nameEl = document.getElementById('myName');
         if (nameEl && nameEl.innerText === "") { nameEl.innerText = countries[myId].name; document.getElementById('myFlagUI').src = countries[myId].flag; isSpawned = countries[myId].isSpawned; }
+        
+        // Площадь (кол-во клеток * КМ на клетку)
+        const areaEl = document.getElementById('myArea'); if(areaEl) areaEl.innerText = (countries[myId].cells * KM_PER_TILE).toLocaleString();
+        
         const popEl = document.getElementById('myPop'); if(popEl) popEl.innerText = Math.floor(countries[myId].population).toLocaleString();
         const dolEl = document.getElementById('myDollars'); if(dolEl) dolEl.innerText = Math.floor(countries[myId].dollars).toLocaleString();
         const incEl = document.getElementById('myIncome'); if (incEl) { incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome); incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; }
@@ -204,7 +209,6 @@ function drawMap() {
     }
     ctx.restore();
 
-    // ИСПРАВЛЕНИЕ 2: ОГРОМНАЯ ПОДСКАЗКА, ЧТО НАДО КЛИКНУТЬ ДЛЯ СПАВНА
     if (myId && !isSpawned) {
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; ctx.fillRect(0, canvas.height / 2 - 60, canvas.width, 120);
         ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 35px Arial'; ctx.textAlign = 'center';
