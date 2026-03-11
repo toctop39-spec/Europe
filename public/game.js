@@ -4,7 +4,7 @@ const ctx = canvas.getContext('2d');
 
 const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = 250; // МАСШТАБ 250 км²
+const KM_PER_TILE = 250; 
 
 canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 
@@ -20,8 +20,8 @@ let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
 
 // Режимы интерфейса
-let buildMode = null; // 'factory', 'radar_1', etc.
-let launchMode = null; // 'tochka', 'tomahawk', etc.
+let buildMode = null; 
+let launchMode = null; 
 let selectedSilo = null;
 
 const sysMsg = document.getElementById('systemMsg');
@@ -31,7 +31,6 @@ const bgMap = new Image(); bgMap.src = 'Map.png'; let loopStarted = false;
 function startGame() { if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); } }
 bgMap.onload = startGame; bgMap.onerror = () => { startGame(); }; setTimeout(startGame, 1000); 
 
-// Клавиши
 const keys = { w: false, a: false, s: false, d: false };
 window.addEventListener('keydown', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = true; if (key === 'a' || key === 'ф') keys.a = true; if (key === 's' || key === 'ы') keys.s = true; if (key === 'd' || key === 'в') keys.d = true; });
 window.addEventListener('keyup', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = false; if (key === 'a' || key === 'ф') keys.a = false; if (key === 's' || key === 'ы') keys.s = false; if (key === 'd' || key === 'в') keys.d = false; });
@@ -66,17 +65,16 @@ socket.on('joinSuccess', (cId) => {
     isPlaying = true;
 });
 
-// Функции для кнопок HTML
-function prepareBuild(type) { buildMode = type; launchMode = null; showMsg(`Выберите место для постройки`); }
-function prepareLaunch(type) { launchMode = type; buildMode = null; selectedSilo = null; showMsg(`Кликните ЛКМ по своей Ракетной Шахте`); }
+// ФУНКЦИИ ИНТЕРФЕЙСА (Строительство и Ракеты)
+window.prepareBuild = function(type) { buildMode = type; launchMode = null; showMsg(`Выберите место для постройки`); }
+window.prepareLaunch = function(type) { launchMode = type; buildMode = null; selectedSilo = null; showMsg(`Кликните ЛКМ по своей Ракетной Шахте`); }
 
-// ДИПЛОМАТИЯ
+// ФУНКЦИИ ДИПЛОМАТИИ
 function updateDiploList() {
     const sel = document.getElementById('diploTarget'); if(!sel) return;
     sel.innerHTML = '';
     for(let id in countries) { if(id !== myId && countries[id].isSpawned) sel.innerHTML += `<option value="${id}">${countries[id].name}</option>`; }
     
-    // Заполняем списки регионов в модалке
     const myRegs = document.getElementById('tradeGiveRegion'); const theirRegs = document.getElementById('tradeTakeRegion');
     if(myRegs && theirRegs) {
         myRegs.innerHTML = '<option value="">-- Нет --</option>'; theirRegs.innerHTML = '<option value="">-- Нет --</option>';
@@ -86,8 +84,8 @@ function updateDiploList() {
         }
     }
 }
-function openTradeModal() { updateDiploList(); document.getElementById('tradeModal').style.display = 'block'; }
-function sendTrade() {
+window.openTradeModal = function() { updateDiploList(); document.getElementById('tradeModal').style.display = 'block'; }
+window.sendTrade = function() {
     const target = document.getElementById('diploTarget').value;
     const give = { money: parseInt(document.getElementById('tradeGiveMoney').value||0), keys: parseInt(document.getElementById('tradeGiveKeys').value||0), mil: parseInt(document.getElementById('tradeGiveMil').value||0), regionId: document.getElementById('tradeGiveRegion').value };
     const take = { money: parseInt(document.getElementById('tradeTakeMoney').value||0), keys: parseInt(document.getElementById('tradeTakeKeys').value||0), mil: parseInt(document.getElementById('tradeTakeMil').value||0), regionId: document.getElementById('tradeTakeRegion').value };
@@ -108,8 +106,8 @@ socket.on('newsEvent', (data) => { const t = document.getElementById('newsTitle'
 
 document.getElementById('drawRegionBtn')?.addEventListener('click', () => { isDrawingRegion = !isDrawingRegion; if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } else { lassoPoints = []; } });
 document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); } });
+document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
 
-// Прием данных с сервера
 socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; buildings = data.buildings||{}; rockets = data.rockets||{}; });
 socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; buildings = data.buildings||{}; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); });
 socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
@@ -119,6 +117,8 @@ socket.on('batchCellUpdate', (data) => { for (const key in data.cells) { territo
 socket.on('syncArmies', (a) => { armies = a; for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } } });
 socket.on('syncBuildings', (b) => { buildings = b; });
 socket.on('syncRockets', (r) => { rockets = r; });
+
+function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
 
 function gameLoop() {
     const camSpeed = 15 / camera.zoom;
@@ -144,12 +144,25 @@ function updateUI() {
         const incEl = document.getElementById('myIncome'); if (incEl) { incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome); incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; }
         const milEl = document.getElementById('myMilitary'); if(milEl) milEl.innerText = Math.floor(countries[myId].military).toLocaleString();
         const capEl = document.getElementById('myCap'); if(capEl) capEl.innerText = countries[myId].cap.toLocaleString();
-        
-        // Новое: КЛЮЧИ
         const keysEl = document.getElementById('myKeys'); if(keysEl) keysEl.innerText = Math.floor(countries[myId].keys).toLocaleString();
-        
-        const regPanel = document.getElementById('regionPanel'); if (regPanel && regPanel.style.display === 'block') updateRegionPanel();
     }
+}
+
+// ВОТ ТА САМАЯ ПРОПАВШАЯ ФУНКЦИЯ!
+function updateRegionPanel() {
+    const rp = document.getElementById('regionPanel');
+    if (!rp) return;
+
+    if (!clickedRegionId || !regions[clickedRegionId]) {
+        rp.style.display = 'none';
+        return;
+    }
+
+    const reg = regions[clickedRegionId]; 
+    rp.style.display = 'block';
+    
+    const rName = document.getElementById('regName'); if(rName) rName.innerText = reg.name;
+    const rOwner = document.getElementById('regOwner'); if(rOwner) rOwner.innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
 }
 
 function drawMap() {
@@ -171,6 +184,14 @@ function drawMap() {
 
     ctx.globalAlpha = 1.0;
     
+    // ОТРИСОВКА РАДАРОВ
+    for (let bId in buildings) {
+        let b = buildings[bId];
+        if (b.type.startsWith('radar') && b.owner === myId) {
+            ctx.fillStyle = 'rgba(52, 152, 219, 0.15)'; ctx.beginPath(); ctx.arc(b.x, b.y, 150, 0, Math.PI*2); ctx.fill();
+        }
+    }
+
     // ОТРИСОВКА ЗДАНИЙ
     for (let bId in buildings) {
         let b = buildings[bId];
@@ -179,12 +200,11 @@ function drawMap() {
         
         ctx.beginPath();
         if (b.type === 'factory') { ctx.rect(b.x-3, b.y-3, 6, 6); } 
-        else if (b.type.startsWith('radar')) { ctx.arc(b.x, b.y, 4, 0, Math.PI); }
+        else if (b.type.startsWith('radar')) { ctx.arc(b.x, b.y, 4, 0, Math.PI*2); }
         else if (b.type.startsWith('pvo')) { ctx.moveTo(b.x, b.y-4); ctx.lineTo(b.x-4, b.y+4); ctx.lineTo(b.x+4, b.y+4); }
         else if (b.type === 'silo') { ctx.rect(b.x-2, b.y-5, 4, 10); }
         ctx.fill(); ctx.stroke();
         
-        // Выделение выбранной шахты
         if (selectedSilo === bId) { ctx.strokeStyle = '#f1c40f'; ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, Math.PI*2); ctx.stroke(); }
     }
 
@@ -198,9 +218,7 @@ function drawMap() {
     const radius = 8 / camera.zoom; 
     for(const id in visualArmies) {
         const army = visualArmies[id]; const owner = countries[army.owner]; if (!owner) continue;
-        if (selectedArmies.includes(id)) {
-            ctx.beginPath(); ctx.arc(army.x, army.y, radius * 1.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
-        }
+        if (selectedArmies.includes(id)) { ctx.beginPath(); ctx.arc(army.x, army.y, radius * 1.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill(); }
         ctx.save(); ctx.beginPath(); ctx.arc(army.x, army.y, radius, 0, Math.PI * 2); ctx.closePath(); ctx.clip(); 
         const flagImg = getFlagImage(army.owner, owner.flag);
         if (flagImg && flagImg.complete) { ctx.drawImage(flagImg, army.x - radius, army.y - radius, radius * 2, radius * 2); } else { ctx.fillStyle = owner.color; ctx.fill(); }
@@ -239,16 +257,15 @@ canvas.addEventListener('mousedown', (e) => {
     const world = getWorldCoords(e);
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
     
-    // РЕЖИМ СТРОИТЕЛЬСТВА
+    // СТРОИТЕЛЬСТВО
     if (e.button === 0 && buildMode) {
         socket.emit('buildStructure', { type: buildMode, cx: Math.floor(world.x/TILE_SIZE), cy: Math.floor(world.y/TILE_SIZE) });
         buildMode = null; showMsg("Стройка начата"); return;
     }
 
-    // РЕЖИМ ЗАПУСКА РАКЕТ
+    // ЗАПУСК РАКЕТ
     if (launchMode) {
         if (e.button === 0) {
-            // Ищем свою шахту по клику
             for(let bId in buildings) { if (buildings[bId].type === 'silo' && buildings[bId].owner === myId && Math.hypot(buildings[bId].x - world.x, buildings[bId].y - world.y) < 15) { selectedSilo = bId; showMsg("Шахта выбрана! ПКМ по цели."); return; } }
         } else if (e.button === 2 && selectedSilo) {
             socket.emit('launchRocket', { siloId: selectedSilo, rocketType: launchMode, targetX: world.x, targetY: world.y });
@@ -272,6 +289,23 @@ canvas.addEventListener('mousemove', (e) => {
 
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
+    
+    // ЛАССО (формирование региона)
+    if (isDrawingRegion) {
+        if (lassoPoints.length > 2) {
+            let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
+            let poly = lassoPoints.map(p => { if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x; if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y; return [p.x, p.y]; });
+            let tilesInside = [];
+            for(let c = Math.max(0, Math.floor(minX/TILE_SIZE)); c <= Math.min(WORLD_WIDTH/TILE_SIZE-1, Math.ceil(maxX/TILE_SIZE)); c++) {
+                for(let r = Math.max(0, Math.floor(minY/TILE_SIZE)); r <= Math.min(WORLD_HEIGHT/TILE_SIZE-1, Math.ceil(maxY/TILE_SIZE)); r++) {
+                    if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
+                }
+            }
+            if (tilesInside.length > 0) { const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`); if (name !== null) { socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" }); showMsg("Оформляем документы..."); } }
+        }
+        isDrawingRegion = false; lassoPoints = []; return;
+    }
+
     if (e.button === 0 && isSelecting) {
         isSelecting = false; const world = getWorldCoords(e);
         const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x); const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
@@ -280,5 +314,9 @@ canvas.addEventListener('mouseup', (e) => {
             const a = visualArmies[id];
             if (a.owner === myId) { if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= hr) selectedArmies.push(id); else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) selectedArmies.push(id); }
         }
+        if (isClick && selectedArmies.length === 0) {
+            const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
+            if (territory[key] && territory[key].owner === myId) { clickedRegionId = territory[key].regionId; updateRegionPanel(); } else { clickedRegionId = null; updateRegionPanel(); }
+        } else if (!isClick || selectedArmies.length > 0) { clickedRegionId = null; updateRegionPanel(); }
     }
 });
