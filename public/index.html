@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Strategy Engine - HOI4 Edition</title>
-    <link rel="stylesheet" href="style.css">
     <style>
         body { background: #111; color: #ddd; font-family: 'Courier New', Courier, monospace; margin: 0; overflow: hidden; user-select: none; }
         canvas { display: block; }
@@ -52,6 +51,7 @@
             <span id="myName" style="font-weight: bold; font-size: 16px;"></span>
         </div>
         <div style="display: flex; gap: 10px;">
+            <div class="stat-box" title="Территория"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
             <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
             <div class="stat-box" title="Рекруты (Макс 10% населения)"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
             <div class="stat-box" title="Экономика"><span class="stat-icon">🏭</span> <span id="myDollars">0</span>$ (<span id="myIncome">0</span>/с)</div>
