@@ -1,538 +1,438 @@
-const socket = io();
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 
-const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+app.use(express.static('public'));
+
+// --- ГЛОБАЛЬНЫЕ ДАННЫЕ ---
+let countries = {}; 
+let playerSockets = {}; 
+let territory = {}; 
+let armies = {}; 
+let regions = {}; 
+
+// Очередь мобилизации войск
+let pendingDeployments = [];
+
+const WORLD_WIDTH = 1920; 
+const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
+const COLLISION_RADIUS = 4; 
 
-canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
+let mapChangedForCauldrons = false; 
 
-let territory = {}; let countries = {}; let armies = {}; let regions = {};
-let myId = null; let isPlaying = false; let isSpawned = false;
+io.on('connection', (socket) => {
+    socket.emit('initLobby', countries);
+    socket.emit('initData', { countries, territory, armies, regions });
 
-let visualArmies = {};
-let camera = { x: 0, y: 0, zoom: 1 };
-let isPanning = false; let lastMouse = {x: 0, y: 0};
-
-let selectedArmies = [];
-let isSelecting = false;
-let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
-
-let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null;
-let lassoPoints = [];
-
-const sysMsg = document.getElementById('systemMsg');
-function showMsg(text) { 
-    if(sysMsg) {
-        sysMsg.innerText = text; 
-        setTimeout(() => sysMsg.innerText = "Камера: W A S D", 3000); 
-    }
-}
-
-// ИСПРАВЛЕНИЕ 1: Запуск игры даже при ошибке загрузки карты
-const bgMap = new Image(); 
-bgMap.src = 'Map.png'; 
-let loopStarted = false;
-
-function startGame() {
-    if (!loopStarted) {
-        loopStarted = true;
-        requestAnimationFrame(gameLoop);
-    }
-}
-bgMap.onload = startGame;
-bgMap.onerror = () => { console.warn("Карта не загрузилась, используем темный фон."); startGame(); };
-setTimeout(startGame, 1000); // Предохранитель: стартуем через 1 сек в любом случае
-
-// ИСПРАВЛЕНИЕ 2: Защита от системных клавиш (toLowerCase)
-const keys = { w: false, a: false, s: false, d: false };
-window.addEventListener('keydown', (e) => {
-    if (!e.key) return; // Игнорируем нажатия без символа
-    let key = e.key.toLowerCase();
-    if (key === 'w' || key === 'ц') keys.w = true;
-    if (key === 'a' || key === 'ф') keys.a = true;
-    if (key === 's' || key === 'ы') keys.s = true;
-    if (key === 'd' || key === 'в') keys.d = true;
-});
-window.addEventListener('keyup', (e) => {
-    if (!e.key) return;
-    let key = e.key.toLowerCase();
-    if (key === 'w' || key === 'ц') keys.w = false;
-    if (key === 'a' || key === 'ф') keys.a = false;
-    if (key === 's' || key === 'ы') keys.s = false;
-    if (key === 'd' || key === 'в') keys.d = false;
-});
-
-// ЛОББИ И ФЛАГ
-let base64Flag = null;
-const flagCache = {}; 
-function getFlagImage(cId, base64Str) {
-    if (!flagCache[cId]) { const img = new Image(); img.src = base64Str; flagCache[cId] = img; }
-    return flagCache[cId];
-}
-
-document.getElementById('countryFlagFile')?.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            const img = new Image();
-            img.onload = () => {
-                const tempCanvas = document.createElement('canvas'); tempCanvas.width = 64; tempCanvas.height = 64; 
-                const tCtx = tempCanvas.getContext('2d'); tCtx.drawImage(img, 0, 0, 64, 64);
-                base64Flag = tempCanvas.toDataURL('image/png');
+    socket.on('joinGame', (data) => {
+        let cId;
+        if (data.isNew) {
+            cId = `c_${Math.random().toString(36).substr(2, 9)}`;
+            countries[cId] = {
+                id: cId, name: data.name, flag: data.flag, color: data.color,
+                cells: 0, dollars: 10000, 
+                population: 100000, // НАСЕЛЕНИЕ
+                military: 10000, // Рекруты
+                cap: 10000, 
+                isSpawned: false, online: true
             };
-            img.src = ev.target.result;
+        } else {
+            cId = data.countryId; if (countries[cId]) countries[cId].online = true;
+        }
+        playerSockets[socket.id] = cId;
+        socket.emit('joinSuccess', cId); 
+        io.emit('initLobby', countries);
+        io.emit('updateMap', { countries, territory, regions });
+    });
+
+    socket.on('spawnCapital', (data) => {
+        const cId = playerSockets[socket.id];
+        const country = countries[cId];
+        if (!country || country.isSpawned) return;
+
+        country.isSpawned = true;
+        const startRegionId = `reg_${cId}_cap`;
+        
+        regions[startRegionId] = { 
+            name: "Столичный округ", owner: cId, cells: 0, level: 1, defLevel: 0,
+            cityX: data.x, cityY: data.y, siegeProgress: 0 
         };
-        reader.readAsDataURL(file);
-    }
-});
 
-socket.on('initLobby', (cList) => {
-    countries = cList;
-    if (isPlaying) return; 
-    const select = document.getElementById('countrySelect');
-    if(select) {
-        select.innerHTML = '<option value="new">-- Основать новую страну --</option>';
-        for (let cId in countries) { if (!countries[cId].online) select.innerHTML += `<option value="${cId}">${countries[cId].name} (Заброшена)</option>`; }
-    }
-});
-
-document.getElementById('countrySelect')?.addEventListener('change', (e) => {
-    const form = document.getElementById('newCountryForm');
-    if(form) form.style.display = e.target.value === 'new' ? 'block' : 'none';
-});
-
-document.getElementById('joinBtn')?.addEventListener('click', () => {
-    const selectVal = document.getElementById('countrySelect').value;
-    if (selectVal === 'new') {
-        const name = document.getElementById('countryName').value || 'Империя'; const color = document.getElementById('countryColor').value;
-        if (!base64Flag) {
-            const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64;
-            const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); base64Flag = tCnv.toDataURL();
-        }
-        socket.emit('joinGame', { isNew: true, name, color, flag: base64Flag });
-    } else { socket.emit('joinGame', { isNew: false, countryId: selectVal }); }
-});
-
-// ИСПРАВЛЕНИЕ 3: Безопасное назначение имени
-socket.on('joinSuccess', (cId) => {
-    myId = cId; 
-    document.getElementById('setupScreen').style.display = 'none';
-    document.getElementById('topBar').style.display = 'flex'; 
-    document.getElementById('controlPanel').style.display = 'block';
-    
-    const menuUI = document.getElementById('mainMenuUI');
-    if (menuUI) menuUI.style.display = 'flex';
-    
-    // Имя и флаг назначим позже в updateUI, когда точно придут данные от сервера
-    isPlaying = true;
-});
-
-// НОВОСТИ И ИВЕНТЫ HOI4
-socket.on('newsEvent', (data) => {
-    const t = document.getElementById('newsTitle');
-    const txt = document.getElementById('newsText');
-    const overlay = document.getElementById('newsOverlay');
-    if (t && txt && overlay) {
-        t.innerText = data.title;
-        txt.innerText = data.text;
-        overlay.style.display = 'block';
-    }
-});
-
-// КНОПКИ УПРАВЛЕНИЯ
-document.getElementById('deployBtn')?.addEventListener('click', () => {
-    const amount = document.getElementById('deployAmount').value;
-    if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); showMsg(`Приказ отдан!`); }
-});
-
-document.getElementById('disbandBtn')?.addEventListener('click', () => {
-    if (selectedArmies.length > 0) { socket.emit('disbandArmies', selectedArmies); showMsg("Дивизии распущены."); selectedArmies = []; document.getElementById('disbandBtn').style.display = 'none'; }
-});
-
-document.getElementById('upgradeBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
-document.getElementById('upgradeDefBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeDefense', clickedRegionId); });
-
-document.getElementById('drawRegionBtn')?.addEventListener('click', () => {
-    isDrawingRegion = !isDrawingRegion;
-    document.getElementById('drawRegionBtn').innerText = isDrawingRegion ? "Отменить" : "Новый регион (Обвести)";
-    if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } 
-    else { lassoPoints = []; }
-});
-
-document.getElementById('renameRegBtn')?.addEventListener('click', () => {
-    if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) {
-        const newName = prompt("Новое название:", regions[clickedRegionId].name);
-        if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName });
-    }
-});
-
-document.getElementById('closeRegBtn')?.addEventListener('click', () => { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; });
-
-// СИНХРОНИЗАЦИЯ СЕРВЕРА
-socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; });
-socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); });
-socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
-socket.on('updateResources', (c) => { countries = c; updateUI(); updateRegionPanel(); });
-
-socket.on('cellUpdate', (data) => { territory[data.key] = data.cell; regions = data.regions; if (data.countries) countries = data.countries; updateUI(); updateRegionPanel(); });
-socket.on('batchCellUpdate', (data) => { for (const key in data.cells) { territory[key] = data.cells[key]; } regions = data.regions; if (data.countries) countries = data.countries; updateUI(); updateRegionPanel(); });
-
-socket.on('syncArmies', (a) => { 
-    armies = a; 
-    for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } }
-});
-
-function pointInPolygon(point, vs) {
-    let x = point[0], y = point[1]; let inside = false;
-    for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-        let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1];
-        let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-        if (intersect) inside = !inside;
-    }
-    return inside;
-}
-
-// ДВИЖОК И ОТРИСОВКА
-function gameLoop() {
-    const camSpeed = 15 / camera.zoom;
-    if (keys.w) camera.y += camSpeed;
-    if (keys.s) camera.y -= camSpeed;
-    if (keys.a) camera.x += camSpeed;
-    if (keys.d) camera.x -= camSpeed;
-
-    if (camera.x > 0) camera.x = 0;
-    if (camera.y > 0) camera.y = 0;
-    const minX = canvas.width - WORLD_WIDTH * camera.zoom;
-    const minY = canvas.height - WORLD_HEIGHT * camera.zoom;
-    if (camera.x < minX) camera.x = minX;
-    if (camera.y < minY) camera.y = minY;
-
-    for(let id in visualArmies) {
-        if(armies[id]) {
-            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4;
-            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4;
-            visualArmies[id].count = armies[id].count; visualArmies[id].owner = armies[id].owner;
-            visualArmies[id].inCombat = armies[id].inCombat; visualArmies[id].targetX = armies[id].targetX; visualArmies[id].targetY = armies[id].targetY;
-        } else { delete visualArmies[id]; }
-    }
-    drawMap();
-    requestAnimationFrame(gameLoop);
-}
-
-// HOI4 UI UPDATE
-function updateUI() {
-    if (myId && countries[myId]) {
-        // Установка имени и флага (если еще не установлено)
-        const nameEl = document.getElementById('myName');
-        if (nameEl && nameEl.innerText === "") {
-            nameEl.innerText = countries[myId].name; 
-            document.getElementById('myFlagUI').src = countries[myId].flag;
-            isSpawned = countries[myId].isSpawned;
-        }
-
-        const popEl = document.getElementById('myPop');
-        if(popEl) popEl.innerText = Math.floor(countries[myId].population).toLocaleString();
-        
-        const dolEl = document.getElementById('myDollars');
-        if(dolEl) dolEl.innerText = Math.floor(countries[myId].dollars).toLocaleString();
-        
-        const incEl = document.getElementById('myIncome');
-        if (incEl) {
-            incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome);
-            incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c';
-        }
-        
-        const milEl = document.getElementById('myMilitary');
-        if(milEl) milEl.innerText = Math.floor(countries[myId].military).toLocaleString();
-        
-        const capEl = document.getElementById('myCap');
-        if(capEl) capEl.innerText = countries[myId].cap.toLocaleString();
-        
-        const regPanel = document.getElementById('regionPanel');
-        if (regPanel && regPanel.style.display === 'block') updateRegionPanel();
-    }
-}
-
-function drawMap() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Запасной фон, если карта не загрузилась
-    if (!bgMap.complete || bgMap.naturalWidth === 0) {
-        ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
-
-    if (bgMap.complete && bgMap.naturalWidth > 0) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-    ctx.globalAlpha = 0.55; 
-    for (const key in territory) {
-        const owner = countries[territory[key].owner];
-        if (owner) {
-            const [ix, iy] = key.split('_').map(Number);
-            ctx.fillStyle = owner.color; ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            
-            // Отрисовка прогресса захвата клетки (микро-эффект фронта)
-            if (territory[key].captureProgress > 0) {
-                ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
-                ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        for(let dx = -6; dx <= 6; dx++) {
+            for(let dy = -6; dy <= 6; dy++) {
+                if(dx*dx + dy*dy <= 36) { 
+                    const cx = data.x + dx; const cy = data.y + dy;
+                    if (cx >= 0 && cx < WORLD_WIDTH/TILE_SIZE && cy >= 0 && cy < WORLD_HEIGHT/TILE_SIZE) {
+                        const key = `${cx}_${cy}`;
+                        territory[key] = { owner: cId, regionId: startRegionId, captureProgress: 0 };
+                        country.cells++; regions[startRegionId].cells++;
+                    }
+                }
             }
         }
+        mapChangedForCauldrons = true;
+        io.emit('updateMap', { countries, territory, regions });
+        io.emit('newsEvent', { title: "НОВОЕ ГОСУДАРСТВО", text: `На мировой арене появилась новая сила: ${country.name}.` });
+    });
+
+    socket.on('lassoRegion', (data) => {
+        const cId = playerSockets[socket.id];
+        if (!cId || !data.tiles.length) return;
+        let ownedTiles = [];
+        data.tiles.forEach(key => { if (territory[key] && territory[key].owner === cId) ownedTiles.push(key); });
+        if (ownedTiles.length === 0) return; 
+
+        if (!regions[data.newRegionId]) {
+            let sumX = 0, sumY = 0;
+            ownedTiles.forEach(key => { const [x, y] = key.split('_').map(Number); sumX += x; sumY += y; });
+            const avgX = Math.floor(sumX / ownedTiles.length); const avgY = Math.floor(sumY / ownedTiles.length);
+            
+            let bestKey = ownedTiles[0]; let minDist = Infinity;
+            ownedTiles.forEach(key => {
+                const [x, y] = key.split('_').map(Number); const d = Math.hypot(x - avgX, y - avgY);
+                if (d < minDist) { minDist = d; bestKey = key; }
+            });
+            const [fX, fY] = bestKey.split('_').map(Number);
+            
+            regions[data.newRegionId] = { name: data.name, owner: cId, cells: 0, level: 1, defLevel: 0, cityX: fX, cityY: fY, siegeProgress: 0 };
+        }
+
+        ownedTiles.forEach(key => {
+            const cell = territory[key];
+            if (regions[cell.regionId]) regions[cell.regionId].cells--;
+            cell.regionId = data.newRegionId; regions[data.newRegionId].cells++;
+        });
+        io.emit('syncTerritory', { territory, regions });
+    });
+
+    socket.on('renameRegion', (data) => {
+        const cId = playerSockets[socket.id]; const reg = regions[data.regionId];
+        if (reg && reg.owner === cId && data.newName) { reg.name = data.newName.substring(0, 20); io.emit('syncTerritory', { territory, regions }); }
+    });
+
+    socket.on('upgradeRegion', (rId) => {
+        const cId = playerSockets[socket.id]; const reg = regions[rId];
+        if (reg && reg.owner === cId && reg.level < 10) {
+            const cost = reg.cells * reg.level * 50;
+            if (countries[cId].dollars >= cost) { countries[cId].dollars -= cost; reg.level++; io.emit('syncTerritory', { territory, regions }); io.emit('updateResources', countries); }
+        }
+    });
+
+    socket.on('upgradeDefense', (rId) => {
+        const cId = playerSockets[socket.id]; const reg = regions[rId];
+        if (reg && reg.owner === cId && (reg.defLevel || 0) < 10) {
+            const next = (reg.defLevel || 0) + 1;
+            const costD = reg.cells * next * 20; const costM = reg.cells * next * 10;
+            if (countries[cId].dollars >= costD && countries[cId].military >= costM) {
+                countries[cId].dollars -= costD; countries[cId].military -= costM;
+                reg.defLevel = next;
+                io.emit('syncTerritory', { territory, regions }); io.emit('updateResources', countries);
+            }
+        }
+    });
+
+    // ОЧЕРЕДЬ МОБИЛИЗАЦИИ
+    socket.on('deployArmy', (data) => {
+        const cId = playerSockets[socket.id]; const reg = regions[data.regionId];
+        if (reg && reg.owner === cId && countries[cId].military >= data.amount) {
+            // Списываем рекрутов сразу
+            countries[cId].military -= data.amount;
+            
+            // Ставим в очередь на 15 секунд
+            pendingDeployments.push({
+                owner: cId,
+                amount: parseInt(data.amount),
+                regionId: data.regionId,
+                readyAt: Date.now() + 15000 // Ровно через 15 сек
+            });
+            
+            io.emit('updateResources', countries);
+            
+            // Отправляем личное уведомление игроку
+            socket.emit('newsEvent', { title: "МОБИЛИЗАЦИЯ НАЧАТА", text: `Дивизия (${data.amount} чел.) будет развернута в регионе ${reg.name} через 15 секунд.` });
+        }
+    });
+
+    socket.on('moveArmies', (data) => {
+        const cId = playerSockets[socket.id];
+        data.armyIds.forEach(id => {
+            if (armies[id] && armies[id].owner === cId) {
+                armies[id].targetX = Math.max(5, Math.min(WORLD_WIDTH - 5, data.targetX));
+                armies[id].targetY = Math.max(5, Math.min(WORLD_HEIGHT - 5, data.targetY));
+            }
+        });
+    });
+
+    socket.on('disbandArmies', (ids) => {
+        const cId = playerSockets[socket.id];
+        ids.forEach(id => { if (armies[id] && armies[id].owner === cId) { countries[cId].military += armies[id].count; delete armies[id]; } });
+        io.emit('syncArmies', armies); io.emit('updateResources', countries);
+    });
+    
+    socket.on('disconnect', () => {
+        const cId = playerSockets[socket.id];
+        if (cId && countries[cId]) countries[cId].online = false;
+        io.emit('initLobby', countries);
+        delete playerSockets[socket.id];
+    });
+});
+
+// --- ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ (30 FPS) ---
+setInterval(() => {
+    let stateChanged = false;
+    const now = Date.now();
+
+    // 0. ОБРАБОТКА ОЧЕРЕДИ МОБИЛИЗАЦИИ
+    for (let i = pendingDeployments.length - 1; i >= 0; i--) {
+        const dep = pendingDeployments[i];
+        if (now >= dep.readyAt) {
+            const reg = regions[dep.regionId];
+            // Проверяем, не захватил ли враг регион за эти 15 секунд
+            if (reg && reg.owner === dep.owner) {
+                const id = Math.random().toString(36).substr(2, 9);
+                armies[id] = { 
+                    id, owner: dep.owner, count: dep.amount, 
+                    x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, 
+                    targetX: null, targetY: null, speed: 0.3 
+                };
+                stateChanged = true;
+            } else {
+                // Регион потерян! Возвращаем рекрутов в пул (мобилизация сорвана)
+                if (countries[dep.owner]) countries[dep.owner].military += dep.amount;
+            }
+            pendingDeployments.splice(i, 1);
+            io.emit('updateResources', countries);
+        }
     }
 
-    ctx.globalAlpha = 1.0;
-    const LINE_W = 1.5; const step = TILE_SIZE;
+    const armyIds = Object.keys(armies);
+    armyIds.forEach(id => { armies[id].targets = []; armies[id].dmg = 0; });
 
-    const getCellOwner = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.owner : null; };
-    const getCellRegion = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.regionId : null; };
-
-    for (const key in territory) {
-        const cell = territory[key];
-        const [ix, iy] = key.split('_').map(Number);
-        const x = ix * step; const y = iy * step; const owner = cell.owner;
-
-        ctx.fillStyle = 'rgba(20, 20, 20, 0.9)'; 
-        if (getCellOwner(ix, iy - 1) !== owner) ctx.fillRect(x, y, step, LINE_W); 
-        if (getCellOwner(ix, iy + 1) !== owner) ctx.fillRect(x, y + step - LINE_W, step, LINE_W); 
-        if (getCellOwner(ix - 1, iy) !== owner) ctx.fillRect(x, y, LINE_W, step); 
-        if (getCellOwner(ix + 1, iy) !== owner) ctx.fillRect(x + step - LINE_W, y, LINE_W, step); 
-
-        ctx.fillStyle = 'rgba(100, 100, 100, 0.5)';
-        if (getCellOwner(ix, iy - 1) === owner && getCellRegion(ix, iy - 1) !== cell.regionId) ctx.fillRect(x, y, step, 1);
-        if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
-    }
-
-    // ГОРОДА
+    // 1. ОСАДА ГОРОДОВ (3 секунды)
     for (const rId in regions) {
         const reg = regions[rId];
-        if (reg.cityX !== undefined) {
-            const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; 
-            const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
-            
-            ctx.fillStyle = 'rgba(10, 10, 10, 0.9)'; ctx.fillRect(tx - 4, ty - 4, 8, 8);
-            
-            // Если город в осаде - рисуем красный контур
-            ctx.strokeStyle = (reg.siegeProgress > 0) ? '#e74c3c' : '#fff'; 
-            ctx.lineWidth = (reg.siegeProgress > 0) ? 2 / camera.zoom : 1 / camera.zoom; 
-            ctx.strokeRect(tx - 4, ty - 4, 8, 8);
+        let beingSiegedBy = null;
 
-            ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.textAlign = 'center';
-            ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2 / camera.zoom;
-            ctx.strokeText(reg.name, tx, ty - (10 / camera.zoom)); ctx.fillText(reg.name, tx, ty - (10 / camera.zoom));
-        }
-    }
-
-    if (isDrawingRegion && lassoPoints.length > 0) {
-        ctx.beginPath(); ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
-        for(let i=1; i<lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
-        ctx.lineTo(lassoPoints[0].x, lassoPoints[0].y); 
-        ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2 / camera.zoom; ctx.stroke();
-    }
-
-    const radius = 8 / camera.zoom; 
-
-    for(const id in visualArmies) {
-        const army = visualArmies[id]; const owner = countries[army.owner];
-        if (!owner) continue;
-
-        if (selectedArmies.includes(id)) {
-            ctx.beginPath(); ctx.arc(army.x, army.y, radius * 1.5, 0, Math.PI * 2); ctx.fillStyle = 'rgba(46, 204, 113, 0.5)'; ctx.fill();
-            if (army.targetX !== null) {
-                ctx.beginPath(); ctx.moveTo(army.x, army.y); ctx.lineTo(army.targetX, army.targetY);
-                ctx.strokeStyle = 'rgba(46, 204, 113, 0.4)'; ctx.lineWidth = 2 / camera.zoom; ctx.setLineDash([4/camera.zoom, 4/camera.zoom]); ctx.stroke(); ctx.setLineDash([]);
+        for (let i = 0; i < armyIds.length; i++) {
+            const a = armies[armyIds[i]];
+            if (reg.cityX !== undefined && Math.floor(a.x/TILE_SIZE) === reg.cityX && Math.floor(a.y/TILE_SIZE) === reg.cityY && a.owner !== reg.owner) {
+                beingSiegedBy = a.owner; break; 
             }
         }
 
-        ctx.save();
-        ctx.beginPath(); ctx.arc(army.x, army.y, radius, 0, Math.PI * 2); ctx.closePath(); ctx.clip(); 
-        const flagImg = getFlagImage(army.owner, owner.flag);
-        if (flagImg && flagImg.complete) { ctx.drawImage(flagImg, army.x - radius, army.y - radius, radius * 2, radius * 2);
-        } else { ctx.fillStyle = owner.color; ctx.fill(); }
-        ctx.restore();
+        if (beingSiegedBy) {
+            reg.siegeProgress = (reg.siegeProgress || 0) + 1;
+            if (reg.siegeProgress >= 90) { // 90 кадров = 3 сек
+                const oldOwner = reg.owner;
+                reg.owner = beingSiegedBy;
+                reg.siegeProgress = 0;
+                for (const k in territory) {
+                    if (territory[k].regionId === rId) {
+                        if (countries[oldOwner]) countries[oldOwner].cells--;
+                        territory[k].owner = beingSiegedBy;
+                        territory[k].captureProgress = 0;
+                        if (countries[beingSiegedBy]) countries[beingSiegedBy].cells++;
+                    }
+                }
+                io.emit('newsEvent', { title: "ПАДЕНИЕ РЕГИОНА", text: `Регион ${reg.name} был захвачен войсками ${countries[beingSiegedBy].name}!` });
+                io.emit('updateMap', { countries, territory, regions });
+            }
+        } else {
+            reg.siegeProgress = 0; 
+        }
+    }
 
-        ctx.beginPath(); ctx.arc(army.x, army.y, radius, 0, Math.PI * 2);
-        ctx.lineWidth = 1.5 / camera.zoom; ctx.strokeStyle = army.inCombat ? 'rgba(192, 57, 43, 1)' : owner.color; ctx.stroke();
+    // 2. ДВИЖЕНИЕ И СОПРОТИВЛЕНИЕ ТЕРРИТОРИИ
+    armyIds.forEach(id => {
+        const a = armies[id];
+        const cellX = Math.floor(a.x/TILE_SIZE); const cellY = Math.floor(a.y/TILE_SIZE);
+        const cellKey = `${cellX}_${cellY}`;
+        const cell = territory[cellKey];
         
-        ctx.fillStyle = 'white'; ctx.font = `bold ${9 / camera.zoom}px Arial`; ctx.strokeStyle = 'black'; ctx.lineWidth = 2 / camera.zoom;
-        const countText = Math.floor(army.count).toString();
-        ctx.strokeText(countText, army.x, army.y + radius + (8 / camera.zoom)); ctx.fillText(countText, army.x, army.y + radius + (8 / camera.zoom));
-    }
+        let currentSpeed = a.speed;
 
-    if (isSelecting) {
-        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1 / camera.zoom;
-        const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
-        ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
-    }
-
-    ctx.restore();
-}
-
-// УПРАВЛЕНИЕ МЫШЬЮ
-canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const zoomAmount = 0.1; const oldZoom = camera.zoom;
-    const minZoom = Math.max(canvas.width / WORLD_WIDTH, canvas.height / WORLD_HEIGHT);
-    camera.zoom = e.deltaY > 0 ? Math.max(minZoom, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount);
-    
-    const rect = canvas.getBoundingClientRect();
-    const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom); camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom);
-});
-
-function getWorldCoords(e) {
-    const rect = canvas.getBoundingClientRect();
-    const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height);
-    let wx = (canvasMouseX - camera.x) / camera.zoom; let wy = (canvasMouseY - camera.y) / camera.zoom;
-    return { x: Math.max(0, Math.min(WORLD_WIDTH, wx)), y: Math.max(0, Math.min(WORLD_HEIGHT, wy)) };
-}
-
-canvas.addEventListener('mousedown', (e) => { 
-    const world = getWorldCoords(e);
-    if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
-
-    if (e.button === 0) {
-        if (!isSpawned) { socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) }); return; }
-        if (isDrawingRegion) { lassoPoints = [world]; return; }
-        isSelecting = true; selectionBox.startX = world.x; selectionBox.startY = world.y; selectionBox.endX = world.x; selectionBox.endY = world.y;
-    }
-    
-    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) { socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y }); }
-});
-
-canvas.addEventListener('mousemove', (e) => { 
-    if (isPanning) { camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y); lastMouse = {x: e.clientX, y: e.clientY}; return; }
-    const world = getWorldCoords(e);
-    if (isSelecting) { selectionBox.endX = world.x; selectionBox.endY = world.y;
-    } else if (isDrawingRegion && e.buttons === 1) { lassoPoints.push(world); }
-});
-
-canvas.addEventListener('mouseup', (e) => { 
-    if (e.button === 1) isPanning = false;
-    
-    if (isDrawingRegion) {
-        if (lassoPoints.length > 2) {
-            let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
-            let poly = lassoPoints.map(p => {
-                if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x;
-                if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y;
-                return [p.x, p.y];
-            });
-
-            let tilesInside = [];
-            for(let c = Math.max(0, Math.floor(minX/TILE_SIZE)); c <= Math.min(WORLD_WIDTH/TILE_SIZE-1, Math.ceil(maxX/TILE_SIZE)); c++) {
-                for(let r = Math.max(0, Math.floor(minY/TILE_SIZE)); r <= Math.min(WORLD_HEIGHT/TILE_SIZE-1, Math.ceil(maxY/TILE_SIZE)); r++) {
-                    if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
-                }
+        if (cell && cell.owner !== a.owner) {
+            currentSpeed = 0.05; // Вязнет во вражеской территории
+            
+            if (regions[cell.regionId]) {
+                a.dmg += ((regions[cell.regionId].defLevel || 0) * 50) / 30; 
             }
 
-            if (tilesInside.length > 0) {
-                const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`);
-                if (name !== null) {
-                    socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" });
-                    showMsg("Оформляем документы...");
+            cell.captureProgress = (cell.captureProgress || 0) + 1;
+            if (cell.captureProgress > 20) { 
+                const oldOwner = cell.owner;
+                if (countries[oldOwner]) countries[oldOwner].cells--;
+                if (regions[cell.regionId]) regions[cell.regionId].cells--;
+                
+                const newRegId = `reg_${a.owner}_cap`;
+                territory[cellKey] = { owner: a.owner, regionId: newRegId, captureProgress: 0 };
+                
+                countries[a.owner].cells++;
+                if (regions[newRegId]) regions[newRegId].cells++;
+                io.emit('cellUpdate', { key: cellKey, cell: territory[cellKey], regions, countries });
+                mapChangedForCauldrons = true;
+            }
+        }
+
+        if (!a.targets.length && a.targetX !== null) {
+            const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
+            if (d > currentSpeed) { 
+                a.x += ((a.targetX-a.x)/d)*currentSpeed; a.y += ((a.targetY-a.y)/d)*currentSpeed; stateChanged = true; 
+            } else { a.targetX = null; }
+        }
+    });
+
+    // 3. БОЕВКА (Ланчестер + Коллизии)
+    for (let i = 0; i < armyIds.length; i++) {
+        const a = armies[armyIds[i]];
+        for (let j = i + 1; j < armyIds.length; j++) {
+            const b = armies[armyIds[j]];
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            if (d < COLLISION_RADIUS * 2) {
+                if (a.owner !== b.owner) { 
+                    a.targets.push(b.id); b.targets.push(a.id); 
+                    a.targetX = null; b.targetX = null; 
+                } else {
+                    const p = (COLLISION_RADIUS * 2 - d) * 0.5;
+                    const ang = Math.atan2(a.y-b.y, a.x-b.x);
+                    a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; 
+                    b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p;
+                    stateChanged = true;
                 }
             }
         }
-        isDrawingRegion = false; lassoPoints = []; 
-        const drawBtn = document.getElementById('drawRegionBtn');
-        if(drawBtn) drawBtn.innerText = "Новый регион (Обвести)";
+    }
+
+    armyIds.forEach(id => {
+        const a = armies[id];
+        if (a.targets.length) {
+            const t = armies[a.targets[0]];
+            if (t) t.dmg += (a.count * 0.005) * (1 + (t.targets.length - 1) * 0.5);
+        }
+    });
+
+    armyIds.forEach(id => {
+        if (armies[id].dmg > 0) { armies[id].count -= armies[id].dmg; stateChanged = true; }
+        if (armies[id].count <= 0) delete armies[id];
+    });
+
+    if (stateChanged) io.emit('syncArmies', armies);
+}, 33);
+
+// --- АСИНХРОННЫЕ КОТЛЫ (Без фризов) ---
+const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
+const total = gridW * gridH;
+let vstd = new Uint8Array(total); let qX = new Int32Array(total); let qY = new Int32Array(total);
+let sX = 0, sY = 0, fillQ = [];
+
+setInterval(() => {
+    if (fillQ.length) {
+        let btch = fillQ.splice(0, Math.max(20, Math.floor(fillQ.length/20)));
+        let updates = {};
+        btch.forEach(c => {
+            const k = `${c.x}_${c.y}`;
+            const old = territory[k] ? territory[k].owner : null;
+            if (old !== c.owner) {
+                if (old && countries[old]) countries[old].cells--;
+                if (territory[k] && regions[territory[k].regionId]) regions[territory[k].regionId].cells--;
+                
+                territory[k] = { owner: c.owner, regionId: c.regId };
+                if (countries[c.owner]) countries[c.owner].cells++;
+                if (regions[c.regId]) regions[c.regId].cells++;
+                updates[k] = territory[k];
+            }
+        });
+        if (Object.keys(updates).length) io.emit('batchCellUpdate', { cells: updates, regions, countries });
         return;
     }
 
-    if (e.button === 0 && isSelecting) {
-        isSelecting = false; const world = getWorldCoords(e);
-        const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x);
-        const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
-        const isClick = (maxX - minX < 5 && maxY - minY < 5);
-        
-        selectedArmies = [];
-        const hr = (8 / camera.zoom) + 2;
-        for (const id in visualArmies) {
-            const a = visualArmies[id];
-            if (a.owner === myId) {
-                if (isClick && Math.hypot(a.x - world.x, a.y - world.y) <= hr) selectedArmies.push(id);
-                else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) selectedArmies.push(id);
-            }
-        }
-
-        const disbBtn = document.getElementById('disbandBtn');
-        if(disbBtn) disbBtn.style.display = selectedArmies.length > 0 ? 'block' : 'none';
-
-        if (isClick && selectedArmies.length === 0) {
-            const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
-            if (territory[key] && territory[key].owner === myId) {
-                clickedRegionId = territory[key].regionId; updateRegionPanel();
-            } else { 
-                const rp = document.getElementById('regionPanel');
-                if(rp) rp.style.display = 'none'; 
-                clickedRegionId = null; 
-            }
-        } else if (!isClick || selectedArmies.length > 0) { 
-            const rp = document.getElementById('regionPanel');
-            if(rp) rp.style.display = 'none'; 
-            clickedRegionId = null; 
-        }
+    if (!mapChangedForCauldrons) return;
+    
+    let armyLocs = {};
+    for(let id in armies) {
+        let k = `${Math.floor(armies[id].x/TILE_SIZE)}_${Math.floor(armies[id].y/TILE_SIZE)}`;
+        if(!armyLocs[k]) armyLocs[k] = [];
+        armyLocs[k].push(armies[id].owner);
     }
-});
 
-function updateRegionPanel() {
-    if (!clickedRegionId || !regions[clickedRegionId]) return;
-    const reg = regions[clickedRegionId];
-    
-    const rp = document.getElementById('regionPanel');
-    if(rp) rp.style.display = 'block';
-    
-    const rName = document.getElementById('regName');
-    if(rName) rName.innerText = reg.name;
-    
-    const rOwner = document.getElementById('regOwner');
-    if(rOwner) rOwner.innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
-    
-    const rLvl = document.getElementById('regLevel');
-    if(rLvl) rLvl.innerText = reg.level;
-    
-    const rInc = document.getElementById('regIncome');
-    if(rInc) rInc.innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
-    
-    const defLevel = reg.defLevel || 0;
-    const rDefLvl = document.getElementById('regDefLevel');
-    if(rDefLvl) rDefLvl.innerText = defLevel;
-    
-    const btnEcon = document.getElementById('upgradeBtn');
-    const btnDef = document.getElementById('upgradeDefBtn');
-    const renBtn = document.getElementById('renameRegBtn');
-    
-    if (reg.owner === myId) {
-        if(btnEcon) btnEcon.style.display = 'block'; 
-        if(btnDef) btnDef.style.display = 'block';
-        if(renBtn) renBtn.style.display = 'inline-block';
-        
-        const upgradeCost = reg.cells * reg.level * 50;
-        if (btnEcon) {
-            if (reg.level >= 10) { btnEcon.innerText = "Инфраструктура Макс"; btnEcon.disabled = true; btnEcon.style.background = '#7f8c8d'; } 
-            else {
-                btnEcon.innerText = `Улучшить Инфраструктуру (${upgradeCost.toLocaleString()} $)`;
-                btnEcon.disabled = countries[myId].dollars < upgradeCost;
-                btnEcon.style.background = btnEcon.disabled ? '#7f8c8d' : '#27ae60';
+    let checked = 0;
+    while (checked < 3000) {
+        let idx = sY * gridW + sX;
+        if (vstd[idx] === 0) {
+            let h = 0, t = 0, edge = false, owners = new Set(), comp = [];
+            const startOwner = territory[`${sX}_${sY}`] ? territory[`${sX}_${sY}`].owner : null;
+            let hasDefendingArmy = false;
+            
+            qX[t] = sX; qY[t] = sY; t++; vstd[idx] = 1;
+            while(h < t) {
+                let cx = qX[h]; let cy = qY[h]; h++;
+                comp.push({x: cx, y: cy});
+                if (cx <= 0 || cx >= gridW-1 || cy <= 0 || cy >= gridH-1) edge = true;
+                
+                if (startOwner !== null && armyLocs[`${cx}_${cy}`] && armyLocs[`${cx}_${cy}`].includes(startOwner)) hasDefendingArmy = true;
+
+                [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx, dy]) => {
+                    let nx = cx + dx, ny = cy + dy;
+                    if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
+                        let nKey = `${nx}_${ny}`;
+                        let nOwn = territory[nKey] ? territory[nKey].owner : null;
+                        if (nOwn === startOwner) {
+                            let nIdx = ny * gridW + nx;
+                            if (vstd[nIdx] === 0) { vstd[nIdx] = 1; qX[t] = nx; qY[t] = ny; t++; }
+                        } else if (nOwn !== null) owners.add(nOwn);
+                    }
+                });
+            }
+
+            if (!edge && owners.size === 1 && !hasDefendingArmy) {
+                let winId = Array.from(owners)[0];
+                if (winId !== startOwner) {
+                    let rId = `reg_${winId}_cap`;
+                    if (!regions[rId]) regions[rId] = { name: "Столица", owner: winId, cells: 0, level: 1, defLevel: 0 };
+                    comp.reverse().forEach(c => fillQ.push({...c, owner: winId, regId: rId}));
+                    break;
+                }
             }
         }
-
-        const defCostDol = reg.cells * (defLevel + 1) * 20; const defCostMil = reg.cells * (defLevel + 1) * 10;
-        if (btnDef) {
-            if (defLevel >= 10) { btnDef.innerText = "Оборона Макс"; btnDef.disabled = true; btnDef.style.background = '#7f8c8d'; }
-            else {
-                btnDef.innerText = `Укрепить Оборону (${defCostDol.toLocaleString()} $, ${defCostMil.toLocaleString()} ⚔️)`;
-                btnDef.disabled = (countries[myId].dollars < defCostDol || countries[myId].military < defCostMil);
-                btnDef.style.background = btnDef.disabled ? '#7f8c8d' : '#c0392b';
-            }
-        }
-    } else { 
-        if(btnEcon) btnEcon.style.display = 'none'; 
-        if(btnDef) btnDef.style.display = 'none'; 
-        if(renBtn) renBtn.style.display = 'none';
+        sX++; checked++;
+        if (sX >= gridW) { sX = 0; sY++; if (sY >= gridH) { sY = 0; mapChangedForCauldrons = false; vstd.fill(0); break; } }
     }
-}
+}, 50);
+
+// --- ЭКОНОМИКА (ОБНОВЛЯЕТСЯ РАЗ В СЕКУНДУ) ---
+setInterval(() => {
+    let changed = false;
+    for (let id in countries) {
+        if (!countries[id].isSpawned) continue;
+        
+        // Рост населения 
+        const popGrowth = Math.floor(countries[id].cells * 0.5);
+        countries[id].population += popGrowth;
+        
+        // Лимит армии = 10% от населения
+        countries[id].cap = Math.floor(countries[id].population * 0.1);
+
+        // ЖЕСТКАЯ ЭКОНОМИКА (Каждый солдат жрет 1 доллар)
+        let main = 0;
+        for (let a in armies) if (armies[a].owner === id) main += armies[a].count * 1; // БЫЛО 0.1, СТАЛО 1
+        
+        let inc = 100 - main;
+        for (let r in regions) if (regions[r].owner === id) inc += regions[r].cells * 1.5 * regions[r].level;
+        
+        countries[id].dollars += inc; countries[id].lastIncome = inc;
+        
+        // Пополнение рекрутов (медленное, зависит от земли)
+        if (countries[id].military < countries[id].cap) {
+            countries[id].military += Math.floor(countries[id].cells * 2);
+            if (countries[id].military > countries[id].cap) countries[id].military = countries[id].cap;
+        }
+        changed = true;
+    }
+    if (changed) io.emit('updateResources', countries);
+}, 1000);
+
+server.listen(process.env.PORT || 3000, () => console.log('HOI4 ENGINE ONLINE'));
