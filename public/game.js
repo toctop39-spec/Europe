@@ -4,7 +4,7 @@ const ctx = canvas.getContext('2d');
 
 const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = 25; // Условные 25 км² на 1 клетку
+const KM_PER_TILE = 250; // Условные 250 км² на 1 клетку
 
 canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 
