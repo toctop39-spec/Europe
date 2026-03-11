@@ -4,7 +4,6 @@ const ctx = canvas.getContext('2d');
 
 const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = TILE_SIZE * TILE_SIZE * 111.32 * 111.32; 
 
 canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 
@@ -23,15 +22,32 @@ let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegio
 let lassoPoints = [];
 
 const sysMsg = document.getElementById('systemMsg');
-function showMsg(text) { sysMsg.innerText = text; setTimeout(() => sysMsg.innerText = "Управление камерой: W A S D", 3000); }
+function showMsg(text) { 
+    if(sysMsg) {
+        sysMsg.innerText = text; 
+        setTimeout(() => sysMsg.innerText = "Камера: W A S D", 3000); 
+    }
+}
 
+// ИСПРАВЛЕНИЕ 1: Запуск игры даже при ошибке загрузки карты
 const bgMap = new Image(); 
 bgMap.src = 'Map.png'; 
-bgMap.onload = () => { requestAnimationFrame(gameLoop); };
+let loopStarted = false;
 
-// УПРАВЛЕНИЕ WASD
+function startGame() {
+    if (!loopStarted) {
+        loopStarted = true;
+        requestAnimationFrame(gameLoop);
+    }
+}
+bgMap.onload = startGame;
+bgMap.onerror = () => { console.warn("Карта не загрузилась, используем темный фон."); startGame(); };
+setTimeout(startGame, 1000); // Предохранитель: стартуем через 1 сек в любом случае
+
+// ИСПРАВЛЕНИЕ 2: Защита от системных клавиш (toLowerCase)
 const keys = { w: false, a: false, s: false, d: false };
 window.addEventListener('keydown', (e) => {
+    if (!e.key) return; // Игнорируем нажатия без символа
     let key = e.key.toLowerCase();
     if (key === 'w' || key === 'ц') keys.w = true;
     if (key === 'a' || key === 'ф') keys.a = true;
@@ -39,6 +55,7 @@ window.addEventListener('keydown', (e) => {
     if (key === 'd' || key === 'в') keys.d = true;
 });
 window.addEventListener('keyup', (e) => {
+    if (!e.key) return;
     let key = e.key.toLowerCase();
     if (key === 'w' || key === 'ц') keys.w = false;
     if (key === 'a' || key === 'ф') keys.a = false;
@@ -54,7 +71,7 @@ function getFlagImage(cId, base64Str) {
     return flagCache[cId];
 }
 
-document.getElementById('countryFlagFile').addEventListener('change', (e) => {
+document.getElementById('countryFlagFile')?.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
         const reader = new FileReader();
@@ -75,15 +92,18 @@ socket.on('initLobby', (cList) => {
     countries = cList;
     if (isPlaying) return; 
     const select = document.getElementById('countrySelect');
-    select.innerHTML = '<option value="new">-- Основать новую страну --</option>';
-    for (let cId in countries) { if (!countries[cId].online) select.innerHTML += `<option value="${cId}">${countries[cId].name} (Заброшена)</option>`; }
+    if(select) {
+        select.innerHTML = '<option value="new">-- Основать новую страну --</option>';
+        for (let cId in countries) { if (!countries[cId].online) select.innerHTML += `<option value="${cId}">${countries[cId].name} (Заброшена)</option>`; }
+    }
 });
 
-document.getElementById('countrySelect').addEventListener('change', (e) => {
-    document.getElementById('newCountryForm').style.display = e.target.value === 'new' ? 'block' : 'none';
+document.getElementById('countrySelect')?.addEventListener('change', (e) => {
+    const form = document.getElementById('newCountryForm');
+    if(form) form.style.display = e.target.value === 'new' ? 'block' : 'none';
 });
 
-document.getElementById('joinBtn').addEventListener('click', () => {
+document.getElementById('joinBtn')?.addEventListener('click', () => {
     const selectVal = document.getElementById('countrySelect').value;
     if (selectVal === 'new') {
         const name = document.getElementById('countryName').value || 'Империя'; const color = document.getElementById('countryColor').value;
@@ -95,42 +115,60 @@ document.getElementById('joinBtn').addEventListener('click', () => {
     } else { socket.emit('joinGame', { isNew: false, countryId: selectVal }); }
 });
 
+// ИСПРАВЛЕНИЕ 3: Безопасное назначение имени
 socket.on('joinSuccess', (cId) => {
-    myId = cId; document.getElementById('setupScreen').style.display = 'none';
-    document.getElementById('topBar').style.display = 'flex'; document.getElementById('controlPanel').style.display = 'block';
-    document.getElementById('myName').innerText = countries[myId].name; document.getElementById('myFlagUI').src = countries[myId].flag;
-    isSpawned = countries[myId].isSpawned; isPlaying = true;
+    myId = cId; 
+    document.getElementById('setupScreen').style.display = 'none';
+    document.getElementById('topBar').style.display = 'flex'; 
+    document.getElementById('controlPanel').style.display = 'block';
+    
+    const menuUI = document.getElementById('mainMenuUI');
+    if (menuUI) menuUI.style.display = 'flex';
+    
+    // Имя и флаг назначим позже в updateUI, когда точно придут данные от сервера
+    isPlaying = true;
 });
 
+// НОВОСТИ И ИВЕНТЫ HOI4
+socket.on('newsEvent', (data) => {
+    const t = document.getElementById('newsTitle');
+    const txt = document.getElementById('newsText');
+    const overlay = document.getElementById('newsOverlay');
+    if (t && txt && overlay) {
+        t.innerText = data.title;
+        txt.innerText = data.text;
+        overlay.style.display = 'block';
+    }
+});
 
 // КНОПКИ УПРАВЛЕНИЯ
-document.getElementById('deployBtn').addEventListener('click', () => {
+document.getElementById('deployBtn')?.addEventListener('click', () => {
     const amount = document.getElementById('deployAmount').value;
-    if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); showMsg(`Развертывание ${amount} солдат!`); }
+    if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); showMsg(`Приказ отдан!`); }
 });
 
-document.getElementById('disbandBtn').addEventListener('click', () => {
+document.getElementById('disbandBtn')?.addEventListener('click', () => {
     if (selectedArmies.length > 0) { socket.emit('disbandArmies', selectedArmies); showMsg("Дивизии распущены."); selectedArmies = []; document.getElementById('disbandBtn').style.display = 'none'; }
 });
 
-document.getElementById('upgradeBtn').addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
-document.getElementById('upgradeDefBtn').addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeDefense', clickedRegionId); });
+document.getElementById('upgradeBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
+document.getElementById('upgradeDefBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeDefense', clickedRegionId); });
 
-document.getElementById('drawRegionBtn').addEventListener('click', () => {
+document.getElementById('drawRegionBtn')?.addEventListener('click', () => {
     isDrawingRegion = !isDrawingRegion;
     document.getElementById('drawRegionBtn').innerText = isDrawingRegion ? "Отменить" : "Новый регион (Обвести)";
     if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } 
     else { lassoPoints = []; }
 });
 
-document.getElementById('renameRegBtn').addEventListener('click', () => {
+document.getElementById('renameRegBtn')?.addEventListener('click', () => {
     if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) {
         const newName = prompt("Новое название:", regions[clickedRegionId].name);
         if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName });
     }
 });
 
-document.getElementById('closeRegBtn').addEventListener('click', () => { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; });
+document.getElementById('closeRegBtn')?.addEventListener('click', () => { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; });
 
 // СИНХРОНИЗАЦИЯ СЕРВЕРА
 socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; });
@@ -146,7 +184,6 @@ socket.on('syncArmies', (a) => {
     for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } }
 });
 
-// АЛГОРИТМ ПРОВЕРКИ ТОЧКИ В ПОЛИГОНЕ
 function pointInPolygon(point, vs) {
     let x = point[0], y = point[1]; let inside = false;
     for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
@@ -157,7 +194,7 @@ function pointInPolygon(point, vs) {
     return inside;
 }
 
-// ДВИЖОК
+// ДВИЖОК И ОТРИСОВКА
 function gameLoop() {
     const camSpeed = 15 / camera.zoom;
     if (keys.w) camera.y += camSpeed;
@@ -184,38 +221,51 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 
-// Замени старую updateUI на эту:
+// HOI4 UI UPDATE
 function updateUI() {
     if (myId && countries[myId]) {
-        // Население
-        document.getElementById('myPop').innerText = Math.floor(countries[myId].population).toLocaleString();
+        // Установка имени и флага (если еще не установлено)
+        const nameEl = document.getElementById('myName');
+        if (nameEl && nameEl.innerText === "") {
+            nameEl.innerText = countries[myId].name; 
+            document.getElementById('myFlagUI').src = countries[myId].flag;
+            isSpawned = countries[myId].isSpawned;
+        }
+
+        const popEl = document.getElementById('myPop');
+        if(popEl) popEl.innerText = Math.floor(countries[myId].population).toLocaleString();
         
-        // Доллары
-        document.getElementById('myDollars').innerText = Math.floor(countries[myId].dollars).toLocaleString();
-        document.getElementById('myIncome').innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome);
-        document.getElementById('myIncome').style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c';
+        const dolEl = document.getElementById('myDollars');
+        if(dolEl) dolEl.innerText = Math.floor(countries[myId].dollars).toLocaleString();
         
-        // Рекруты (10%)
-        document.getElementById('myMilitary').innerText = Math.floor(countries[myId].military).toLocaleString();
-        document.getElementById('myCap').innerText = countries[myId].cap.toLocaleString();
+        const incEl = document.getElementById('myIncome');
+        if (incEl) {
+            incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome);
+            incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c';
+        }
         
-        // Панель региона обновить, если открыта
-        if (document.getElementById('regionPanel').style.display === 'block') updateRegionPanel();
+        const milEl = document.getElementById('myMilitary');
+        if(milEl) milEl.innerText = Math.floor(countries[myId].military).toLocaleString();
+        
+        const capEl = document.getElementById('myCap');
+        if(capEl) capEl.innerText = countries[myId].cap.toLocaleString();
+        
+        const regPanel = document.getElementById('regionPanel');
+        if (regPanel && regPanel.style.display === 'block') updateRegionPanel();
     }
 }
 
-// Добавь обработчик новостей куда-нибудь в конец game.js:
-socket.on('newsEvent', (data) => {
-    document.getElementById('newsTitle').innerText = data.title;
-    document.getElementById('newsText').innerText = data.text;
-    document.getElementById('newsOverlay').style.display = 'block';
-});
-
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Запасной фон, если карта не загрузилась
+    if (!bgMap.complete || bgMap.naturalWidth === 0) {
+        ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
     ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
 
-    if (bgMap.complete) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+    if (bgMap.complete && bgMap.naturalWidth > 0) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
     ctx.globalAlpha = 0.55; 
     for (const key in territory) {
@@ -223,6 +273,12 @@ function drawMap() {
         if (owner) {
             const [ix, iy] = key.split('_').map(Number);
             ctx.fillStyle = owner.color; ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            
+            // Отрисовка прогресса захвата клетки (микро-эффект фронта)
+            if (territory[key].captureProgress > 0) {
+                ctx.fillStyle = 'rgba(255, 0, 0, 0.4)';
+                ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+            }
         }
     }
 
@@ -256,7 +312,11 @@ function drawMap() {
             const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
             
             ctx.fillStyle = 'rgba(10, 10, 10, 0.9)'; ctx.fillRect(tx - 4, ty - 4, 8, 8);
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 / camera.zoom; ctx.strokeRect(tx - 4, ty - 4, 8, 8);
+            
+            // Если город в осаде - рисуем красный контур
+            ctx.strokeStyle = (reg.siegeProgress > 0) ? '#e74c3c' : '#fff'; 
+            ctx.lineWidth = (reg.siegeProgress > 0) ? 2 / camera.zoom : 1 / camera.zoom; 
+            ctx.strokeRect(tx - 4, ty - 4, 8, 8);
 
             ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.textAlign = 'center';
             ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2 / camera.zoom;
@@ -373,11 +433,13 @@ canvas.addEventListener('mouseup', (e) => {
                 const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`);
                 if (name !== null) {
                     socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" });
-                    showMsg("Регион сформирован!");
+                    showMsg("Оформляем документы...");
                 }
             }
         }
-        isDrawingRegion = false; lassoPoints = []; document.getElementById('drawRegionBtn').innerText = "Новый регион (Обвести)";
+        isDrawingRegion = false; lassoPoints = []; 
+        const drawBtn = document.getElementById('drawRegionBtn');
+        if(drawBtn) drawBtn.innerText = "Новый регион (Обвести)";
         return;
     }
 
@@ -397,14 +459,23 @@ canvas.addEventListener('mouseup', (e) => {
             }
         }
 
-        document.getElementById('disbandBtn').style.display = selectedArmies.length > 0 ? 'block' : 'none';
+        const disbBtn = document.getElementById('disbandBtn');
+        if(disbBtn) disbBtn.style.display = selectedArmies.length > 0 ? 'block' : 'none';
 
         if (isClick && selectedArmies.length === 0) {
             const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
             if (territory[key] && territory[key].owner === myId) {
                 clickedRegionId = territory[key].regionId; updateRegionPanel();
-            } else { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
-        } else if (!isClick || selectedArmies.length > 0) { document.getElementById('regionPanel').style.display = 'none'; clickedRegionId = null; }
+            } else { 
+                const rp = document.getElementById('regionPanel');
+                if(rp) rp.style.display = 'none'; 
+                clickedRegionId = null; 
+            }
+        } else if (!isClick || selectedArmies.length > 0) { 
+            const rp = document.getElementById('regionPanel');
+            if(rp) rp.style.display = 'none'; 
+            clickedRegionId = null; 
+        }
     }
 });
 
@@ -412,41 +483,56 @@ function updateRegionPanel() {
     if (!clickedRegionId || !regions[clickedRegionId]) return;
     const reg = regions[clickedRegionId];
     
-    document.getElementById('regionPanel').style.display = 'block';
-    document.getElementById('regName').innerText = reg.name;
-    document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
+    const rp = document.getElementById('regionPanel');
+    if(rp) rp.style.display = 'block';
     
-    document.getElementById('regLevel').innerText = reg.level;
-    document.getElementById('regIncome').innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
+    const rName = document.getElementById('regName');
+    if(rName) rName.innerText = reg.name;
+    
+    const rOwner = document.getElementById('regOwner');
+    if(rOwner) rOwner.innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
+    
+    const rLvl = document.getElementById('regLevel');
+    if(rLvl) rLvl.innerText = reg.level;
+    
+    const rInc = document.getElementById('regIncome');
+    if(rInc) rInc.innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
     
     const defLevel = reg.defLevel || 0;
-    document.getElementById('regDefLevel').innerText = defLevel;
-    document.getElementById('regDefDmg').innerText = (defLevel * 50).toLocaleString(); 
-
+    const rDefLvl = document.getElementById('regDefLevel');
+    if(rDefLvl) rDefLvl.innerText = defLevel;
+    
     const btnEcon = document.getElementById('upgradeBtn');
     const btnDef = document.getElementById('upgradeDefBtn');
+    const renBtn = document.getElementById('renameRegBtn');
     
     if (reg.owner === myId) {
-        btnEcon.style.display = 'block'; btnDef.style.display = 'block';
-        document.getElementById('renameRegBtn').style.display = 'block';
+        if(btnEcon) btnEcon.style.display = 'block'; 
+        if(btnDef) btnDef.style.display = 'block';
+        if(renBtn) renBtn.style.display = 'inline-block';
         
         const upgradeCost = reg.cells * reg.level * 50;
-        if (reg.level >= 10) { btnEcon.innerText = "ВВП Макс"; btnEcon.disabled = true; btnEcon.style.background = '#7f8c8d'; } 
-        else {
-            btnEcon.innerText = `Улучшить ВВП (${upgradeCost.toLocaleString()} $)`;
-            btnEcon.disabled = countries[myId].dollars < upgradeCost;
-            btnEcon.style.background = btnEcon.disabled ? '#7f8c8d' : '#27ae60';
+        if (btnEcon) {
+            if (reg.level >= 10) { btnEcon.innerText = "Инфраструктура Макс"; btnEcon.disabled = true; btnEcon.style.background = '#7f8c8d'; } 
+            else {
+                btnEcon.innerText = `Улучшить Инфраструктуру (${upgradeCost.toLocaleString()} $)`;
+                btnEcon.disabled = countries[myId].dollars < upgradeCost;
+                btnEcon.style.background = btnEcon.disabled ? '#7f8c8d' : '#27ae60';
+            }
         }
 
         const defCostDol = reg.cells * (defLevel + 1) * 20; const defCostMil = reg.cells * (defLevel + 1) * 10;
-        if (defLevel >= 10) { btnDef.innerText = "Защита Макс"; btnDef.disabled = true; btnDef.style.background = '#7f8c8d'; }
-        else {
-            btnDef.innerText = `Улучшить Защиту (${defCostDol.toLocaleString()} $, ${defCostMil.toLocaleString()} ⚔️)`;
-            btnDef.disabled = (countries[myId].dollars < defCostDol || countries[myId].military < defCostMil);
-            btnDef.style.background = btnDef.disabled ? '#7f8c8d' : '#c0392b';
+        if (btnDef) {
+            if (defLevel >= 10) { btnDef.innerText = "Оборона Макс"; btnDef.disabled = true; btnDef.style.background = '#7f8c8d'; }
+            else {
+                btnDef.innerText = `Укрепить Оборону (${defCostDol.toLocaleString()} $, ${defCostMil.toLocaleString()} ⚔️)`;
+                btnDef.disabled = (countries[myId].dollars < defCostDol || countries[myId].military < defCostMil);
+                btnDef.style.background = btnDef.disabled ? '#7f8c8d' : '#c0392b';
+            }
         }
     } else { 
-        btnEcon.style.display = 'none'; btnDef.style.display = 'none'; 
-        document.getElementById('renameRegBtn').style.display = 'none';
+        if(btnEcon) btnEcon.style.display = 'none'; 
+        if(btnDef) btnDef.style.display = 'none'; 
+        if(renBtn) renBtn.style.display = 'none';
     }
 }
