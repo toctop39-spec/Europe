@@ -184,16 +184,32 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 
+// Замени старую updateUI на эту:
 function updateUI() {
     if (myId && countries[myId]) {
-        document.getElementById('myArea').innerText = Math.floor(countries[myId].cells * KM_PER_TILE / 1000).toLocaleString(); 
+        // Население
+        document.getElementById('myPop').innerText = Math.floor(countries[myId].population).toLocaleString();
+        
+        // Доллары
         document.getElementById('myDollars').innerText = Math.floor(countries[myId].dollars).toLocaleString();
         document.getElementById('myIncome').innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome);
-        document.getElementById('myIncome').style.color = countries[myId].lastIncome >= 0 ? '#27ae60' : '#c0392b';
+        document.getElementById('myIncome').style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c';
+        
+        // Рекруты (10%)
         document.getElementById('myMilitary').innerText = Math.floor(countries[myId].military).toLocaleString();
         document.getElementById('myCap').innerText = countries[myId].cap.toLocaleString();
+        
+        // Панель региона обновить, если открыта
+        if (document.getElementById('regionPanel').style.display === 'block') updateRegionPanel();
     }
 }
+
+// Добавь обработчик новостей куда-нибудь в конец game.js:
+socket.on('newsEvent', (data) => {
+    document.getElementById('newsTitle').innerText = data.title;
+    document.getElementById('newsText').innerText = data.text;
+    document.getElementById('newsOverlay').style.display = 'block';
+});
 
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
