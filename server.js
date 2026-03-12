@@ -20,9 +20,8 @@ let pendingTrades = {};
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const COLLISION_RADIUS = 4; 
+const COLLISION_RADIUS = 8; // УВЕЛИЧЕНО: теперь они нормально достают друг до друга в бою
 
-// --- КОНФИГИ СУЩНОСТЕЙ ---
 const BUILD_COSTS = {
     'factory': { cost: 5000, hp: 100 },
     'radar_1': { cost: 8000, hp: 100, radius: 150 },
@@ -39,8 +38,8 @@ const ROCKET_STATS = {
 
 let batchedCellUpdates = {};
 let mapChangedForCauldrons = false; 
+let forceRegionUpdate = false; // Для синхронизации круга захвата
 
-// ХЕЛПЕР: Проверка покрытия радаром
 function isWithinRadar(owner, x, y) {
     for (let id in buildings) {
         let b = buildings[id];
@@ -163,7 +162,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- СТРОИТЕЛЬСТВО ЗДАНИЙ ---
     socket.on('buildStructure', (data) => {
         const cId = playerSockets[socket.id];
         if (!cId || !territory[`${data.cx}_${data.cy}`] || territory[`${data.cx}_${data.cy}`].owner !== cId) return;
@@ -177,7 +175,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- РАКЕТНЫЙ УДАР ---
     socket.on('launchRocket', (data) => {
         const cId = playerSockets[socket.id];
         if (!cId || !buildings[data.siloId] || buildings[data.siloId].owner !== cId) return;
@@ -195,7 +192,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- ДИПЛОМАТИЯ И ОБМЕН ---
     socket.on('proposeTrade', (data) => {
         const cFrom = playerSockets[socket.id];
         const cTo = data.targetId;
@@ -241,7 +237,6 @@ io.on('connection', (socket) => {
         io.emit('newsEvent', { title: "ДИПЛОМАТИЧЕСКОЕ СОГЛАШЕНИЕ", text: `${cFrom.name} и ${cTo.name} заключили крупный торговый договор.` });
     });
 
-    // --- УПРАВЛЕНИЕ АРМИЕЙ ---
     socket.on('deployArmy', (data) => {
         const cId = playerSockets[socket.id]; const reg = regions[data.regionId];
         if (reg && reg.owner === cId) {
@@ -283,19 +278,17 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- ОПТИМИЗАЦИЯ СЕТИ (Отправка батча клеток) ---
 setInterval(() => {
-    if (Object.keys(batchedCellUpdates).length > 0) {
+    if (Object.keys(batchedCellUpdates).length > 0 || forceRegionUpdate) {
         io.emit('batchCellUpdate', { cells: batchedCellUpdates, regions, countries }); 
         batchedCellUpdates = {};
+        forceRegionUpdate = false;
     }
 }, 200);
 
-// --- ГЛАВНЫЙ ИГРОВОЙ ЦИКЛ (30 FPS) ---
 setInterval(() => {
     let stateChanged = false; const now = Date.now();
 
-    // 1. ПОЛЕТ И ПЕРЕХВАТ РАКЕТ
     for (let rId in rockets) {
         let r = rockets[rId];
         let d = Math.hypot(r.targetX - r.x, r.targetY - r.y);
@@ -333,7 +326,6 @@ setInterval(() => {
         }
     }
 
-    // 2. ДВИЖЕНИЕ АРМИЙ И ЗАХВАТ
     const armyIds = Object.keys(armies);
     armyIds.forEach(id => { armies[id].targets = []; armies[id].dmg = 0; });
 
@@ -369,7 +361,6 @@ setInterval(() => {
         }
     });
 
-    // 3. БОЕВКА АРМИЙ
     for (let i = 0; i < armyIds.length; i++) {
         const a = armies[armyIds[i]];
         for (let j = i + 1; j < armyIds.length; j++) {
@@ -387,7 +378,8 @@ setInterval(() => {
 
     armyIds.forEach(id => {
         const a = armies[id];
-        if (a.targets.length) { const t = armies[a.targets[0]]; if (t) t.dmg += (a.count * 0.005) * (1 + (t.targets.length - 1) * 0.5); }
+        // УВЕЛИЧЕННЫЙ УРОН! (Раньше было 0.005, теперь 0.015). Войска будут таять на глазах.
+        if (a.targets.length) { const t = armies[a.targets[0]]; if (t) t.dmg += (a.count * 0.015) * (1 + (t.targets.length - 1) * 0.5); }
     });
 
     armyIds.forEach(id => {
@@ -395,7 +387,6 @@ setInterval(() => {
         if (armies[id].count <= 0) delete armies[id];
     });
 
-    // 4. ОСАДА ГОРОДОВ
     for (const rId in regions) {
         const reg = regions[rId]; let beingSiegedBy = null;
         for (let i = 0; i < armyIds.length; i++) {
@@ -406,6 +397,8 @@ setInterval(() => {
         }
         if (beingSiegedBy) {
             reg.siegeProgress = (reg.siegeProgress || 0) + 1;
+            forceRegionUpdate = true; // Триггер для клиента, чтобы нарисовать круг!
+            
             if (reg.siegeProgress >= 90) { 
                 const oldOwner = reg.owner; reg.owner = beingSiegedBy; reg.siegeProgress = 0;
                 for (const k in territory) {
@@ -422,7 +415,6 @@ setInterval(() => {
         } else { reg.siegeProgress = 0; }
     }
 
-    // 5. ОЧЕРЕДЬ МОБИЛИЗАЦИИ
     for (let i = pendingDeployments.length - 1; i >= 0; i--) {
         const dep = pendingDeployments[i];
         if (now >= dep.readyAt) {
@@ -437,7 +429,6 @@ setInterval(() => {
     if (stateChanged) { io.emit('syncArmies', armies); io.emit('syncBuildings', buildings); io.emit('syncRockets', rockets); }
 }, 33);
 
-// --- АСИНХРОННЫЕ КОТЛЫ ---
 const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
 const total = gridW * gridH;
 let vstd = new Uint8Array(total); let qX = new Int32Array(total); let qY = new Int32Array(total);
@@ -467,8 +458,16 @@ setInterval(() => {
     while (checked < 3000) {
         let idx = sY * gridW + sX;
         if (vstd[idx] === 0) {
-            let h = 0, t = 0, edge = false, owners = new Set(), comp = [];
             const startOwner = territory[`${sX}_${sY}`] ? territory[`${sX}_${sY}`].owner : null;
+            
+            // ИСПРАВЛЕНИЕ ЛАГА: Пропускаем огромные массивы пустых нейтральных клеток!
+            if (startOwner === null) {
+                vstd[idx] = 1; sX++; checked++; 
+                if (sX >= gridW) { sX = 0; sY++; if (sY >= gridH) { sY = 0; mapChangedForCauldrons = false; vstd.fill(0); break; } }
+                continue;
+            }
+
+            let h = 0, t = 0, edge = false, owners = new Set(), comp = [];
             let hasDefendingArmy = false;
             qX[t] = sX; qY[t] = sY; t++; vstd[idx] = 1;
             
@@ -503,7 +502,6 @@ setInterval(() => {
     }
 }, 50);
 
-// --- ЭКОНОМИКА (1 раз в секунду) ---
 setInterval(() => {
     let changed = false;
     let factoryCounts = {};
