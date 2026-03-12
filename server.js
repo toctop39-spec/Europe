@@ -21,9 +21,9 @@ const WORLD_WIDTH = 1920;
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
 
-// ИСПРАВЛЕННЫЕ РАДИУСЫ
-const ENGAGE_RADIUS = 25; // Начинают стрелять издалека
-const COLLISION_RADIUS = 6; // Толкаются только вблизи
+// ТЕ САМЫЕ ИДЕАЛЬНЫЕ РАДИУСЫ ИЗ ТВОЕЙ СТАРОЙ ВЕРСИИ
+const ENGAGE_RADIUS = 25; 
+const COLLISION_RADIUS = 6; 
 
 const BUILD_COSTS = {
     'factory': { cost: 5000, hp: 100 },
@@ -331,25 +331,25 @@ setInterval(() => {
 
     const armyIds = Object.keys(armies);
     
-    // 1. ОЧИСТКА
+    // 1. ОЧИСТКА ЦЕЛЕЙ (Правильный порядок)
     armyIds.forEach(id => { armies[id].targets = []; armies[id].dmg = 0; });
 
-    // 2. СНАЧАЛА ПРОСЧИТЫВАЕМ БОЙ И КОЛЛИЗИЮ (ИСПРАВЛЕН ПОРЯДОК!)
+    // 2. БОЙ И МЯГКАЯ КОЛЛИЗИЯ ИЗ ТВОЕГО СТАРОГО КОДА
     for (let i = 0; i < armyIds.length; i++) {
         const a = armies[armyIds[i]];
         for (let j = i + 1; j < armyIds.length; j++) {
             const b = armies[armyIds[j]]; 
             const d = Math.hypot(a.x - b.x, a.y - b.y);
             
-            // Если враги на дистанции огня - они СТОПОРЯТСЯ И СТРЕЛЯЮТ
+            // Если враги подошли на дистанцию стрельбы (25)
             if (a.owner !== b.owner && d < ENGAGE_RADIUS) {
                 a.targets.push(b.id); 
                 b.targets.push(a.id); 
-                a.targetX = null; // Приказ стоять
-                b.targetX = null; // Приказ стоять
+                a.targetX = null; // Приказ стоять и стрелять
+                b.targetX = null; 
             }
             
-            // Мягкая коллизия (если подошли слишком близко друг к другу)
+            // Мягкая коллизия (если подошли ближе 12 пикселей друг к другу)
             if (d < COLLISION_RADIUS * 2 && d > 0) {
                 const p = (COLLISION_RADIUS * 2 - d) * 0.1;
                 const ang = Math.atan2(a.y - b.y, a.x - b.x);
@@ -360,15 +360,16 @@ setInterval(() => {
         }
     }
 
-    // 3. ЗАТЕМ ДВИЖЕНИЕ (ЕСЛИ НЕ В БОЮ)
+    // 3. ДВИЖЕНИЕ И ЗАХВАТ
     armyIds.forEach(id => {
         const a = armies[id]; 
         const cellKey = `${Math.floor(a.x/TILE_SIZE)}_${Math.floor(a.y/TILE_SIZE)}`;
         const cell = territory[cellKey]; 
         let currentSpeed = a.speed || 0.3;
 
+        // Если клетка чужая или нейтральная
         if (!cell || cell.owner !== a.owner) {
-            currentSpeed = 0.15; // Раньше тут было 0.05, поэтому они вязли!
+            currentSpeed = 0.15; // ИДЕАЛЬНАЯ СКОРОСТЬ ЗАХВАТА ИЗ ТВОЕГО КОДА
             if (!territory[cellKey]) territory[cellKey] = { owner: null, captureProgress: 0 };
             territory[cellKey].captureProgress = (territory[cellKey].captureProgress || 0) + 1;
             
@@ -390,7 +391,7 @@ setInterval(() => {
             }
         }
         
-        // Движемся только если нет таргетов (не в бою)
+        // Армия двигается только если у нее нет врагов в зоне поражения
         if (a.targets.length === 0 && a.targetX !== null) {
             const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
             if (d > currentSpeed) { 
@@ -403,13 +404,13 @@ setInterval(() => {
         }
     });
 
-    // 4. НАНЕСЕНИЕ УРОНА (РАСЧЕТ МАССОВКИ)
+    // 4. НАНЕСЕНИЕ УРОНА (БОНУС ТОЛПЫ ИЗ СТАРОГО КОДА)
     armyIds.forEach(id => {
         const a = armies[id];
         if (a.targets.length) { 
             const t = armies[a.targets[0]]; 
             if (t) {
-                // Если армию 't' бьют несколько отрядов, урон каждого умножается!
+                // Урон умножается на (1 + количество армий, бьющих эту цель * 0.5)
                 t.dmg += (a.count * 0.015) * (1 + (t.targets.length - 1) * 0.5); 
             }
         }
@@ -420,6 +421,7 @@ setInterval(() => {
         if (armies[id].count <= 0) delete armies[id];
     });
 
+    // 5. ЛОГИКА ОСАДЫ СТОЛИЦ РЕГИОНА
     for (const rId in regions) {
         const reg = regions[rId]; let beingSiegedBy = null;
         for (let i = 0; i < armyIds.length; i++) {
@@ -430,7 +432,7 @@ setInterval(() => {
         }
         if (beingSiegedBy) {
             reg.siegeProgress = (reg.siegeProgress || 0) + 1;
-            forceRegionUpdate = true;
+            forceRegionUpdate = true; // Заставляет клиент рисовать красный круг
             
             if (reg.siegeProgress >= 90) { 
                 const oldOwner = reg.owner; reg.owner = beingSiegedBy; reg.siegeProgress = 0;
@@ -489,6 +491,7 @@ setInterval(() => {
     
     let checked = 0;
 
+    // Считаем общее количество захваченных клеток в мире (40 клеток = 10 000 кв км)
     let totalOwnedCells = 0;
     for (let c in countries) { if(countries[c].isSpawned) totalOwnedCells += countries[c].cells; }
 
@@ -497,6 +500,7 @@ setInterval(() => {
         if (vstd[idx] === 0) {
             const startOwner = territory[`${sX}_${sY}`] ? territory[`${sX}_${sY}`].owner : null;
             
+            // Пропускаем сканирование пустых земель в начале игры, чтобы не лагало
             if (startOwner === null && totalOwnedCells < 40) {
                 vstd[idx] = 1; sX++; checked++; 
                 if (sX >= gridW) { sX = 0; sY++; if (sY >= gridH) { sY = 0; mapChangedForCauldrons = false; vstd.fill(0); break; } }
