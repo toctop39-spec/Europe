@@ -20,7 +20,10 @@ let pendingTrades = {};
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const COLLISION_RADIUS = 8; // УВЕЛИЧЕНО: теперь они нормально достают друг до друга в бою
+
+// РАДИУСЫ: Бой начинается на 15, а физически они толкаются на 4.
+const ENGAGE_RADIUS = 15; 
+const COLLISION_RADIUS = 4; 
 
 const BUILD_COSTS = {
     'factory': { cost: 5000, hp: 100 },
@@ -38,7 +41,7 @@ const ROCKET_STATS = {
 
 let batchedCellUpdates = {};
 let mapChangedForCauldrons = false; 
-let forceRegionUpdate = false; // Для синхронизации круга захвата
+let forceRegionUpdate = false; 
 
 function isWithinRadar(owner, x, y) {
     for (let id in buildings) {
@@ -355,31 +358,55 @@ setInterval(() => {
                 mapChangedForCauldrons = true;
             }
         }
+        
+        // Армия двигается только если у нее нет врагов в зоне поражения
         if (!a.targets.length && a.targetX !== null) {
             const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
-            if (d > currentSpeed) { a.x += ((a.targetX-a.x)/d)*currentSpeed; a.y += ((a.targetY-a.y)/d)*currentSpeed; stateChanged = true; } else { a.targetX = null; }
+            if (d > currentSpeed) { 
+                a.x += ((a.targetX-a.x)/d)*currentSpeed; 
+                a.y += ((a.targetY-a.y)/d)*currentSpeed; 
+                stateChanged = true; 
+            } else { 
+                a.targetX = null; 
+            }
         }
     });
 
+    // ОБНОВЛЕННАЯ СИСТЕМА КОЛЛИЗИИ И БОЯ
     for (let i = 0; i < armyIds.length; i++) {
         const a = armies[armyIds[i]];
         for (let j = i + 1; j < armyIds.length; j++) {
-            const b = armies[armyIds[j]]; const d = Math.hypot(a.x - b.x, a.y - b.y);
-            if (d < COLLISION_RADIUS * 2) {
-                if (a.owner !== b.owner) { 
-                    a.targets.push(b.id); b.targets.push(a.id); a.targetX = null; b.targetX = null; 
-                } else {
-                    const p = (COLLISION_RADIUS * 2 - d) * 0.5; const ang = Math.atan2(a.y-b.y, a.x-b.x);
-                    a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p; stateChanged = true;
-                }
+            const b = armies[armyIds[j]]; 
+            const d = Math.hypot(a.x - b.x, a.y - b.y);
+            
+            // Если враги подошли на дистанцию стрельбы (ENGAGE_RADIUS)
+            if (a.owner !== b.owner && d < ENGAGE_RADIUS) {
+                a.targets.push(b.id); 
+                b.targets.push(a.id); 
+                a.targetX = null; 
+                b.targetX = null; 
+            }
+            
+            // Мягкая коллизия (толкаются только в упор, чтобы не сливаться в одну точку)
+            if (d < COLLISION_RADIUS * 2 && d > 0) {
+                const p = (COLLISION_RADIUS * 2 - d) * 0.1; // 0.1 дает плавность, армии не дергаются
+                const ang = Math.atan2(a.y - b.y, a.x - b.x);
+                a.x += Math.cos(ang) * p; a.y += Math.sin(ang) * p; 
+                b.x -= Math.cos(ang) * p; b.y -= Math.sin(ang) * p; 
+                stateChanged = true;
             }
         }
     }
 
     armyIds.forEach(id => {
         const a = armies[id];
-        // УВЕЛИЧЕННЫЙ УРОН! (Раньше было 0.005, теперь 0.015). Войска будут таять на глазах.
-        if (a.targets.length) { const t = armies[a.targets[0]]; if (t) t.dmg += (a.count * 0.015) * (1 + (t.targets.length - 1) * 0.5); }
+        if (a.targets.length) { 
+            const t = armies[a.targets[0]]; 
+            if (t) {
+                // БОНУС МАССОВКИ: Урон умножается на (1 + количество армий, бьющих эту цель * 0.5)
+                t.dmg += (a.count * 0.02) * (1 + (t.targets.length - 1) * 0.5); 
+            }
+        }
     });
 
     armyIds.forEach(id => {
@@ -397,7 +424,7 @@ setInterval(() => {
         }
         if (beingSiegedBy) {
             reg.siegeProgress = (reg.siegeProgress || 0) + 1;
-            forceRegionUpdate = true; // Триггер для клиента, чтобы нарисовать круг!
+            forceRegionUpdate = true;
             
             if (reg.siegeProgress >= 90) { 
                 const oldOwner = reg.owner; reg.owner = beingSiegedBy; reg.siegeProgress = 0;
@@ -455,13 +482,18 @@ setInterval(() => {
     let armyLocs = {}; for(let id in armies) { let k = `${Math.floor(armies[id].x/TILE_SIZE)}_${Math.floor(armies[id].y/TILE_SIZE)}`; if(!armyLocs[k]) armyLocs[k] = []; armyLocs[k].push(armies[id].owner); }
     
     let checked = 0;
+
+    // Считаем общее количество захваченных клеток в мире (40 клеток = 10 000 кв км)
+    let totalOwnedCells = 0;
+    for (let c in countries) { if(countries[c].isSpawned) totalOwnedCells += countries[c].cells; }
+
     while (checked < 3000) {
         let idx = sY * gridW + sX;
         if (vstd[idx] === 0) {
             const startOwner = territory[`${sX}_${sY}`] ? territory[`${sX}_${sY}`].owner : null;
             
-            // ИСПРАВЛЕНИЕ ЛАГА: Пропускаем огромные массивы пустых нейтральных клеток!
-            if (startOwner === null) {
+            // Если клетка нейтральная, а на карте меньше 10 000 кв км, то пропускаем скан котла!
+            if (startOwner === null && totalOwnedCells < 40) {
                 vstd[idx] = 1; sX++; checked++; 
                 if (sX >= gridW) { sX = 0; sY++; if (sY >= gridH) { sY = 0; mapChangedForCauldrons = false; vstd.fill(0); break; } }
                 continue;
