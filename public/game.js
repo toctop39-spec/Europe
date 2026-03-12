@@ -101,7 +101,17 @@ document.getElementById('declineTradeBtn')?.addEventListener('click', () => { so
 
 socket.on('newsEvent', (data) => { const t = document.getElementById('newsTitle'); const txt = document.getElementById('newsText'); const overlay = document.getElementById('newsOverlay'); if (t && txt && overlay) { t.innerText = data.title; txt.innerText = data.text; overlay.style.display = 'block'; } });
 
-document.getElementById('drawRegionBtn')?.addEventListener('click', () => { isDrawingRegion = !isDrawingRegion; if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } else { lassoPoints = []; } });
+document.getElementById('drawRegionBtn')?.addEventListener('click', () => { 
+    isDrawingRegion = !isDrawingRegion; 
+    document.getElementById('drawRegionBtn').innerText = isDrawingRegion ? "Отменить" : "Сформировать регион";
+    if (isDrawingRegion) { 
+        currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; 
+        showMsg("Обведите территорию ЛКМ"); 
+    } else { 
+        lassoPoints = []; 
+    } 
+});
+
 document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); } });
 document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
 document.getElementById('upgradeBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
@@ -252,7 +262,7 @@ function drawMap() {
         }
     }
 
-    // ОТРИСОВКА ТОЧЕК ЗДАНИЙ (без лишней геометрии)
+    // ОТРИСОВКА ТОЧЕК ЗДАНИЙ 
     for (let bId in buildings) {
         let b = buildings[bId];
         let color = countries[b.owner] ? countries[b.owner].color : '#fff';
@@ -292,7 +302,7 @@ function drawMap() {
         ctx.strokeText(countText, army.x, army.y + radius + (8 / camera.zoom)); ctx.fillText(countText, army.x, army.y + radius + (8 / camera.zoom));
     }
 
-    if (isSelecting && !buildMode && !launchMode) {
+    if (isSelecting && !buildMode && !launchMode && !isDrawingRegion) {
         ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1 / camera.zoom;
         const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
         ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
@@ -348,7 +358,12 @@ canvas.addEventListener('mousedown', (e) => {
 canvas.addEventListener('mousemove', (e) => { 
     if (isPanning) { camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y); lastMouse = {x: e.clientX, y: e.clientY}; return; }
     const world = getWorldCoords(e);
-    if (isSelecting) { selectionBox.endX = world.x; selectionBox.endY = world.y; } 
+    if (isSelecting) { 
+        selectionBox.endX = world.x; selectionBox.endY = world.y; 
+    } else if (isDrawingRegion && e.buttons === 1) { 
+        // ВОТ ОНО - ВОЗВРАЩЕНИЕ ЛАССО
+        lassoPoints.push(world); 
+    }
 });
 
 canvas.addEventListener('mouseup', (e) => { 
@@ -365,9 +380,17 @@ canvas.addEventListener('mouseup', (e) => {
                     if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
                 }
             }
-            if (tilesInside.length > 0) { const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`); if (name !== null) { socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" }); showMsg("Оформляем документы..."); } }
+            if (tilesInside.length > 0) { 
+                const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`); 
+                if (name !== null) { 
+                    socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" }); 
+                    showMsg("Оформляем документы..."); 
+                } 
+            }
         }
-        isDrawingRegion = false; lassoPoints = []; return;
+        isDrawingRegion = false; lassoPoints = []; 
+        document.getElementById('drawRegionBtn').innerText = "Сформировать регион";
+        return;
     }
 
     if (e.button === 0 && isSelecting) {
