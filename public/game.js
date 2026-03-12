@@ -19,7 +19,6 @@ let isPanning = false; let lastMouse = {x: 0, y: 0};
 let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
 
-// Режимы интерфейса
 let buildMode = null; 
 let launchMode = null; 
 let selectedSilo = null;
@@ -65,12 +64,10 @@ socket.on('joinSuccess', (cId) => {
     isPlaying = true;
 });
 
-// ФУНКЦИИ ИНТЕРФЕЙСА (Строительство и Ракеты)
 window.prepareBuild = function(type) { buildMode = type; launchMode = null; showMsg(`Выберите место для постройки`); }
 window.prepareLaunch = function(type) { launchMode = type; buildMode = null; selectedSilo = null; showMsg(`Кликните ЛКМ по своей Ракетной Шахте`); }
 
-// ФУНКЦИИ ДИПЛОМАТИИ
-function updateDiploList() {
+window.updateDiploList = function() {
     const sel = document.getElementById('diploTarget'); if(!sel) return;
     sel.innerHTML = '';
     for(let id in countries) { if(id !== myId && countries[id].isSpawned) sel.innerHTML += `<option value="${id}">${countries[id].name}</option>`; }
@@ -107,6 +104,9 @@ socket.on('newsEvent', (data) => { const t = document.getElementById('newsTitle'
 document.getElementById('drawRegionBtn')?.addEventListener('click', () => { isDrawingRegion = !isDrawingRegion; if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } else { lassoPoints = []; } });
 document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) { socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); } });
 document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
+document.getElementById('upgradeBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
+document.getElementById('upgradeDefBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeDefense', clickedRegionId); });
+document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
 
 socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; buildings = data.buildings||{}; rockets = data.rockets||{}; });
 socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; buildings = data.buildings||{}; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); });
@@ -148,7 +148,6 @@ function updateUI() {
     }
 }
 
-// ВОТ ТА САМАЯ ПРОПАВШАЯ ФУНКЦИЯ!
 function updateRegionPanel() {
     const rp = document.getElementById('regionPanel');
     if (!rp) return;
@@ -163,6 +162,31 @@ function updateRegionPanel() {
     
     const rName = document.getElementById('regName'); if(rName) rName.innerText = reg.name;
     const rOwner = document.getElementById('regOwner'); if(rOwner) rOwner.innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
+    
+    const rLvl = document.getElementById('regLevel'); if(rLvl) rLvl.innerText = reg.level;
+    const rInc = document.getElementById('regIncome'); if(rInc) rInc.innerText = (reg.cells * 1.5 * reg.level).toLocaleString(); 
+    const defLevel = reg.defLevel || 0; 
+    const rDefLvl = document.getElementById('regDefLevel'); if(rDefLvl) rDefLvl.innerText = defLevel;
+    
+    const btnEcon = document.getElementById('upgradeBtn'); 
+    const btnDef = document.getElementById('upgradeDefBtn'); 
+    const renBtn = document.getElementById('renameRegBtn');
+    
+    if (reg.owner === myId) {
+        if(btnEcon) btnEcon.style.display = 'block'; 
+        if(btnDef) btnDef.style.display = 'block'; 
+        if(renBtn) renBtn.style.display = 'inline-block';
+        
+        const upgradeCost = reg.cells * reg.level * 50;
+        if (btnEcon) { if (reg.level >= 10) { btnEcon.innerText = "Инфраструктура Макс"; btnEcon.disabled = true; btnEcon.style.background = '#7f8c8d'; } else { btnEcon.innerText = `Улучшить Инфраструктуру (${upgradeCost.toLocaleString()} $)`; btnEcon.disabled = countries[myId].dollars < upgradeCost; btnEcon.style.background = btnEcon.disabled ? '#7f8c8d' : '#27ae60'; } }
+        
+        const defCostDol = reg.cells * (defLevel + 1) * 20; const defCostMil = reg.cells * (defLevel + 1) * 10;
+        if (btnDef) { if (defLevel >= 10) { btnDef.innerText = "Оборона Макс"; btnDef.disabled = true; btnDef.style.background = '#7f8c8d'; } else { btnDef.innerText = `Укрепить Оборону (${defCostDol.toLocaleString()} $, ${defCostMil.toLocaleString()} ⚔️)`; btnDef.disabled = (countries[myId].dollars < defCostDol || countries[myId].military < defCostMil); btnDef.style.background = btnDef.disabled ? '#7f8c8d' : '#c0392b'; } }
+    } else { 
+        if(btnEcon) btnEcon.style.display = 'none'; 
+        if(btnDef) btnDef.style.display = 'none'; 
+        if(renBtn) renBtn.style.display = 'none';
+    }
 }
 
 function drawMap() {
@@ -184,7 +208,43 @@ function drawMap() {
 
     ctx.globalAlpha = 1.0;
     
-    // ОТРИСОВКА РАДАРОВ
+    // ОТРИСОВКА ЧЕРНЫХ ГРАНИЦ И РЕГИОНОВ
+    const LINE_W = 1.5; const step = TILE_SIZE;
+    const getCellOwner = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.owner : null; };
+    const getCellRegion = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.regionId : null; };
+
+    for (const key in territory) {
+        const cell = territory[key]; const [ix, iy] = key.split('_').map(Number); const x = ix * step; const y = iy * step; const owner = cell.owner;
+        ctx.fillStyle = 'rgba(10, 10, 10, 0.9)'; 
+        if (getCellOwner(ix, iy - 1) !== owner) ctx.fillRect(x, y, step, LINE_W); 
+        if (getCellOwner(ix, iy + 1) !== owner) ctx.fillRect(x, y + step - LINE_W, step, LINE_W); 
+        if (getCellOwner(ix - 1, iy) !== owner) ctx.fillRect(x, y, LINE_W, step); 
+        if (getCellOwner(ix + 1, iy) !== owner) ctx.fillRect(x + step - LINE_W, y, LINE_W, step); 
+        ctx.fillStyle = 'rgba(100, 100, 100, 0.5)';
+        if (getCellOwner(ix, iy - 1) === owner && getCellRegion(ix, iy - 1) !== cell.regionId) ctx.fillRect(x, y, step, 1);
+        if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
+    }
+
+    // ОТРИСОВКА НАЗВАНИЙ РЕГИОНОВ
+    for (const rId in regions) {
+        const reg = regions[rId];
+        if (reg.cityX !== undefined) {
+            const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
+            ctx.fillStyle = 'rgba(10, 10, 10, 0.9)'; ctx.fillRect(tx - 4, ty - 4, 8, 8);
+            ctx.strokeStyle = (reg.siegeProgress > 0) ? '#e74c3c' : '#fff'; ctx.lineWidth = (reg.siegeProgress > 0) ? 2 / camera.zoom : 1 / camera.zoom; ctx.strokeRect(tx - 4, ty - 4, 8, 8);
+            ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.textAlign = 'center'; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2 / camera.zoom;
+            ctx.strokeText(reg.name, tx, ty - (10 / camera.zoom)); ctx.fillText(reg.name, tx, ty - (10 / camera.zoom));
+        }
+    }
+
+    // ОТРИСОВКА ЛИНИИ ЛАССО
+    if (isDrawingRegion && lassoPoints.length > 0) {
+        ctx.beginPath(); ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
+        for(let i=1; i<lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
+        ctx.lineTo(lassoPoints[0].x, lassoPoints[0].y); ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2 / camera.zoom; ctx.stroke();
+    }
+
+    // ОТРИСОВКА РАДАРОВ (Зона покрытия)
     for (let bId in buildings) {
         let b = buildings[bId];
         if (b.type.startsWith('radar') && b.owner === myId) {
@@ -192,19 +252,23 @@ function drawMap() {
         }
     }
 
-    // ОТРИСОВКА ЗДАНИЙ
+    // ОТРИСОВКА ТОЧЕК ЗДАНИЙ (без лишней геометрии)
     for (let bId in buildings) {
         let b = buildings[bId];
         let color = countries[b.owner] ? countries[b.owner].color : '#fff';
+        
         ctx.fillStyle = color; ctx.strokeStyle = '#000'; ctx.lineWidth = 1/camera.zoom;
+        ctx.beginPath(); ctx.arc(b.x, b.y, 3/camera.zoom, 0, Math.PI*2); ctx.fill(); ctx.stroke();
         
-        ctx.beginPath();
-        if (b.type === 'factory') { ctx.rect(b.x-3, b.y-3, 6, 6); } 
-        else if (b.type.startsWith('radar')) { ctx.arc(b.x, b.y, 4, 0, Math.PI*2); }
-        else if (b.type.startsWith('pvo')) { ctx.moveTo(b.x, b.y-4); ctx.lineTo(b.x-4, b.y+4); ctx.lineTo(b.x+4, b.y+4); }
-        else if (b.type === 'silo') { ctx.rect(b.x-2, b.y-5, 4, 10); }
-        ctx.fill(); ctx.stroke();
-        
+        let bName = "ЗДАНИЕ";
+        if(b.type === 'factory') bName = "ФАБРИКА";
+        else if(b.type.startsWith('radar')) bName = "РАДАР";
+        else if(b.type.startsWith('pvo')) bName = "ПВО";
+        else if(b.type === 'silo') bName = "ШАХТА";
+
+        ctx.fillStyle = 'white'; ctx.font = `bold ${8 / camera.zoom}px Arial`; ctx.textAlign = 'center'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2/camera.zoom;
+        ctx.strokeText(bName, b.x, b.y - (6 / camera.zoom)); ctx.fillText(bName, b.x, b.y - (6 / camera.zoom));
+
         if (selectedSilo === bId) { ctx.strokeStyle = '#f1c40f'; ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, Math.PI*2); ctx.stroke(); }
     }
 
@@ -290,7 +354,7 @@ canvas.addEventListener('mousemove', (e) => {
 canvas.addEventListener('mouseup', (e) => { 
     if (e.button === 1) isPanning = false;
     
-    // ЛАССО (формирование региона)
+    // ЛАССО
     if (isDrawingRegion) {
         if (lassoPoints.length > 2) {
             let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
