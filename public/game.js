@@ -235,15 +235,25 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
-    // ОТРИСОВКА НАЗВАНИЙ РЕГИОНОВ
+    // ОТРИСОВКА НАЗВАНИЙ РЕГИОНОВ И КРУГА ОСАДЫ
     for (const rId in regions) {
         const reg = regions[rId];
         if (reg.cityX !== undefined) {
             const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
+            
+            // КРУГ ЗАХВАТА
+            if (reg.siegeProgress > 0) {
+                ctx.beginPath();
+                ctx.arc(tx, ty, 12 / camera.zoom, -Math.PI/2, (-Math.PI/2) + ((reg.siegeProgress / 90) * Math.PI * 2));
+                ctx.strokeStyle = '#e74c3c';
+                ctx.lineWidth = 4 / camera.zoom;
+                ctx.stroke();
+            }
+
             ctx.fillStyle = 'rgba(10, 10, 10, 0.9)'; ctx.fillRect(tx - 4, ty - 4, 8, 8);
             ctx.strokeStyle = (reg.siegeProgress > 0) ? '#e74c3c' : '#fff'; ctx.lineWidth = (reg.siegeProgress > 0) ? 2 / camera.zoom : 1 / camera.zoom; ctx.strokeRect(tx - 4, ty - 4, 8, 8);
             ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.textAlign = 'center'; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2 / camera.zoom;
-            ctx.strokeText(reg.name, tx, ty - (10 / camera.zoom)); ctx.fillText(reg.name, tx, ty - (10 / camera.zoom));
+            ctx.strokeText(reg.name, tx, ty - (15 / camera.zoom)); ctx.fillText(reg.name, tx, ty - (15 / camera.zoom));
         }
     }
 
@@ -361,7 +371,6 @@ canvas.addEventListener('mousemove', (e) => {
     if (isSelecting) { 
         selectionBox.endX = world.x; selectionBox.endY = world.y; 
     } else if (isDrawingRegion && e.buttons === 1) { 
-        // ВОТ ОНО - ВОЗВРАЩЕНИЕ ЛАССО
         lassoPoints.push(world); 
     }
 });
