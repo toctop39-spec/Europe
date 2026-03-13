@@ -135,13 +135,21 @@
 
     <canvas id="gameCanvas"></canvas>
     <script src="/socket.io/socket.io.js"></script>
-    <script>
+<script>
         function switchTab(tabId) {
+            // Убираем активность со всех вкладок и кнопок
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
-            event.target.classList.add('active');
+            
+            // Показываем нужную вкладку
+            const tabContent = document.getElementById(tabId);
+            if (tabContent) tabContent.classList.add('active');
+            
+            // Находим нужную кнопку по тексту атрибута onclick и делаем её активной
+            const btn = document.querySelector(`.tab-btn[onclick*="${tabId}"]`);
+            if (btn) btn.classList.add('active');
         }
+
         function showCreateRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('createRoomPanel').style.display = 'block'; }
         function showJoinRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'block'; }
         function backToRoomPanel() { document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('roomPanel').style.display = 'block'; }
