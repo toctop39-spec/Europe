@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Strategy Engine - HOI4 Edition</title>
+    <title>Global Strategy - Multiplayer</title>
     <style>
         body { background: #111; color: #ddd; font-family: 'Courier New', Courier, monospace; margin: 0; overflow: hidden; user-select: none; }
         canvas { display: block; }
@@ -14,8 +14,11 @@
         
         #setupScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         .panel { background: #1a1a1a; padding: 30px; border-radius: 5px; border: 1px solid #444; text-align: center; width: 350px; font-family: 'Arial', sans-serif; }
-        .panel input, .panel select { padding: 10px; width: 90%; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 3px; }
-        .panel button { padding: 12px; width: 100%; background: #2c3e50; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; }
+        .panel h2 { margin-top: 0; color: #ecf0f1; }
+        .panel input, .panel select { padding: 10px; width: 90%; box-sizing: border-box; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 3px; }
+        .panel button { padding: 12px; width: 100%; background: #2c3e50; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
+        .panel button:hover { background: #34495e; }
+        .btn-military { background: #c0392b !important; } .btn-military:hover { background: #e74c3c !important; }
         
         #sideMenu { position: absolute; left: 15px; top: 60px; width: 280px; background: rgba(20,20,20,0.95); border: 1px solid #333; z-index: 10; font-family: 'Arial', sans-serif; display: none; }
         .tabs { display: flex; border-bottom: 1px solid #444; }
@@ -24,11 +27,7 @@
         .tab-content { padding: 15px; display: none; max-height: 400px; overflow-y: auto; }
         .tab-content.active { display: block; }
         
-        .build-btn { width: 100%; padding: 10px; background: #2c3e50; color: white; border: 1px solid #444; margin-bottom: 5px; cursor: pointer; text-align: left; }
-        .build-btn:hover { background: #34495e; }
-        
         .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
-        .btn-military { width: 100%; padding: 8px; background: #c0392b; color: white; border: none; cursor: pointer; font-weight: bold; }
 
         #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; font-family: 'Arial', sans-serif; display: none; }
         
@@ -42,14 +41,35 @@
 </head>
 <body>
     <div id="setupScreen">
-        <div class="panel">
-            <h2>Основать государство</h2>
+        <div id="roomPanel" class="panel">
+            <h2>Глобальная Стратегия</h2>
+            <button onclick="showCreateRoom()">Создать сервер</button>
+            <button onclick="showJoinRoom()">Присоединиться по коду</button>
+        </div>
+
+        <div id="createRoomPanel" class="panel" style="display:none;">
+            <h2>Создать сервер</h2>
+            <input type="text" id="presetNameInput" placeholder="Имя заготовки (пусто = новая карта)">
+            <button onclick="createRoom()">Создать</button>
+            <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
+        </div>
+
+        <div id="joinRoomPanel" class="panel" style="display:none;">
+            <h2>Присоединиться</h2>
+            <input type="text" id="roomCodeInput" placeholder="Код комнаты (например, A7X9)" maxlength="5" style="text-transform: uppercase;">
+            <button onclick="joinRoom()">Войти</button>
+            <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
+        </div>
+
+        <div id="countryPanel" class="panel" style="display:none;">
+            <h2>Выбор страны</h2>
+            <p style="margin-top:0; font-size:12px; color:#aaa;">Код комнаты: <b id="displaySetupRoomCode" style="color:#f1c40f; font-size:16px;"></b></p>
             <select id="countrySelect"><option value="new">-- Новая страна --</option></select>
             <div id="newCountryForm">
                 <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
                 <input type="file" id="countryFlagFile" accept="image/*">
                 <label style="display:block; font-size: 12px; margin-bottom: 5px;">Цвет границ:</label>
-                <input type="color" id="countryColor" value="#2b5e8a">
+                <input type="color" id="countryColor" value="#2b5e8a" style="height:40px; cursor:pointer;">
             </div>
             <button id="joinBtn">Начать игру</button>
         </div>
@@ -61,10 +81,10 @@
             <span id="myName" style="font-weight: bold; font-size: 16px;"></span>
         </div>
         <div style="display: flex; gap: 10px;">
+            <div class="stat-box" title="Код сервера для друзей"><span class="stat-icon">🔑</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
             <div class="stat-box" title="Площадь"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
             <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
             <div class="stat-box" title="Рекруты"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
-            <div class="stat-box" title="Ключи (Пром. детали для ракет)"><span class="stat-icon">🔧</span> <span id="myKeys">0</span></div>
             <div class="stat-box" title="Экономика"><span class="stat-icon">💲</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>/с)</div>
         </div>
     </div>
@@ -72,31 +92,14 @@
     <div id="sideMenu">
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('tab-manage')">Управление</button>
-            <button class="tab-btn" onclick="switchTab('tab-build')">Постройки</button>
-            <button class="tab-btn" onclick="switchTab('tab-missiles')">Ракеты</button>
             <button class="tab-btn" onclick="switchTab('tab-diplomacy')">Дипломатия</button>
         </div>
         
         <div id="tab-manage" class="tab-content active">
             <button id="drawRegionBtn" class="btn-civil">Сформировать регион</button>
+            <button id="savePresetBtn" class="btn-civil" style="background:#f39c12; color:#111;">💾 Сохранить карту как заготовку</button>
             <button id="disbandBtn" class="btn-civil" style="background:#8e44ad; display:none;">Распустить армию</button>
             <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">ЛКМ - выбор, ПКМ - движение войск.</p>
-        </div>
-
-        <div id="tab-build" class="tab-content">
-            <p style="font-size: 11px; color:#aaa;">Выберите здание и кликните на свою территорию.</p>
-            <button class="build-btn" onclick="prepareBuild('factory')">🔧 Фабрика (Производит ключи)<br><span style="font-size:10px;color:#f1c40f">5000$</span></button>
-            <button class="build-btn" onclick="prepareBuild('radar_1')">📡 Радар 'Дозор' (Обнаружение 150км)<br><span style="font-size:10px;color:#f1c40f">8000$</span></button>
-            <button class="build-btn" onclick="prepareBuild('pvo_1')">🛡️ ПВО 'Стрела' (Тир 1)<br><span style="font-size:10px;color:#f1c40f">12000$</span></button>
-            <button class="build-btn" onclick="prepareBuild('pvo_2')">🛡️ ПВО 'Патриот' (Тир 2)<br><span style="font-size:10px;color:#f1c40f">35000$</span></button>
-            <button class="build-btn" onclick="prepareBuild('silo')">🚀 Ракетная шахта<br><span style="font-size:10px;color:#f1c40f">15000$</span></button>
-        </div>
-
-        <div id="tab-missiles" class="tab-content">
-            <p style="font-size: 11px; color:#aaa;">Выберите ракету и кликните по своей шахте, затем ПКМ по цели.</p>
-            <button class="build-btn" onclick="prepareLaunch('tochka')">Точка-У (Тир 1, Медленная)<br><span style="font-size:10px;color:#f1c40f">2000$, 50🔧</span></button>
-            <button class="build-btn" onclick="prepareLaunch('tomahawk')">Томагавк (Тир 2, Средняя)<br><span style="font-size:10px;color:#f1c40f">10000$, 200🔧</span></button>
-            <button class="build-btn" onclick="prepareLaunch('oreshnik')">Орешник (Тир 3, Гиперзвук, Радиус++)<br><span style="font-size:10px;color:#f1c40f">50000$, 1000🔧</span></button>
         </div>
 
         <div id="tab-diplomacy" class="tab-content">
@@ -111,21 +114,19 @@
             <div class="trade-col">
                 <h4 style="margin-top:0;">Я отдаю:</h4>
                 <label>Деньги ($)</label><input type="number" id="tradeGiveMoney" value="0" min="0">
-                <label>Ключи (🔧)</label><input type="number" id="tradeGiveKeys" value="0" min="0">
                 <label>Войска (⚔️)</label><input type="number" id="tradeGiveMil" value="0" min="0">
                 <label>Регион</label><select id="tradeGiveRegion"><option value="">-- Нет --</option></select>
             </div>
             <div class="trade-col">
                 <h4 style="margin-top:0;">Я требую:</h4>
                 <label>Деньги ($)</label><input type="number" id="tradeTakeMoney" value="0" min="0">
-                <label>Ключи (🔧)</label><input type="number" id="tradeTakeKeys" value="0" min="0">
                 <label>Войска (⚔️)</label><input type="number" id="tradeTakeMil" value="0" min="0">
                 <label>Регион</label><select id="tradeTakeRegion"><option value="">-- Нет --</option></select>
             </div>
         </div>
         <div style="display:flex; gap:10px;">
             <button class="btn-civil" style="background:#27ae60;" onclick="sendTrade()">Отправить</button>
-            <button class="btn-military" onclick="document.getElementById('tradeModal').style.display='none'">Отмена</button>
+            <button class="btn-military" onclick="document.getElementById('tradeModal').style.display='none'" style="width:100%; padding:8px; color:white; border:none; cursor:pointer; font-weight:bold;">Отмена</button>
         </div>
     </div>
 
@@ -134,7 +135,7 @@
         <p id="incomingTradeDesc" style="font-size: 14px; text-align: left; background: #222; padding: 10px;"></p>
         <div style="display:flex; gap:10px; margin-top: 15px;">
             <button class="btn-civil" style="background:#27ae60;" id="acceptTradeBtn">ПРИНЯТЬ</button>
-            <button class="btn-military" id="declineTradeBtn">ОТКАЗАТЬСЯ</button>
+            <button class="btn-military" id="declineTradeBtn" style="width:100%; padding:8px; color:white; border:none; cursor:pointer; font-weight:bold;">ОТКАЗАТЬСЯ</button>
         </div>
     </div>
 
@@ -152,14 +153,14 @@
         
         <hr style="border-color: #444;">
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
-        <button id="deployBtn" class="btn-military">Развернуть войска (15 сек)</button>
+        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска (15 сек)</button>
         <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
     </div>
 
     <div id="newsOverlay">
-        <div class="news-title" id="newsTitle">СРОЧНЫЕ НОВОСТИ</div>
+        <div class="news-title" id="newsTitle" style="font-weight:bold; font-size:20px;">СРОЧНЫЕ НОВОСТИ</div>
         <p id="newsText" style="font-size: 16px; margin-bottom: 20px;"></p>
-        <button onclick="document.getElementById('newsOverlay').style.display='none'" style="background: #34495e; color: white; border: none; padding: 10px 20px; cursor: pointer;">Принять</button>
+        <button onclick="document.getElementById('newsOverlay').style.display='none'" style="background: #34495e; color: white; border: none; padding: 10px 20px; cursor: pointer; font-weight:bold;">Принять</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -174,6 +175,9 @@
                 updateDiploList();
             }
         }
+        function showCreateRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('createRoomPanel').style.display = 'block'; }
+        function showJoinRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'block'; }
+        function backToRoomPanel() { document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('roomPanel').style.display = 'block'; }
     </script>
     <script src="game.js"></script>
 </body>
