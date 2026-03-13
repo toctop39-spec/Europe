@@ -9,8 +9,7 @@ const KM_PER_TILE = 250;
 canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
 
 let territory = {}; let countries = {}; let armies = {}; let regions = {};
-let buildings = {}; let rockets = {};
-let myId = null; let isPlaying = false; let isSpawned = false;
+let myId = null; let currentRoomId = null; let isPlaying = false; let isSpawned = false;
 
 let visualArmies = {};
 let camera = { x: 0, y: 0, zoom: 1 };
@@ -18,10 +17,6 @@ let isPanning = false; let lastMouse = {x: 0, y: 0};
 
 let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
-
-let buildMode = null; 
-let launchMode = null; 
-let selectedSilo = null;
 
 const sysMsg = document.getElementById('systemMsg');
 function showMsg(text) { if(sysMsg) { sysMsg.innerText = text; setTimeout(() => sysMsg.innerText = "ЛКМ - выбор, ПКМ - движение войск.", 3000); } }
@@ -39,6 +34,42 @@ function getFlagImage(cId, base64Str) { if (!flagCache[cId]) { const img = new I
 
 document.getElementById('countryFlagFile')?.addEventListener('change', (e) => {
     const file = e.target.files[0]; if (file) { const reader = new FileReader(); reader.onload = (ev) => { const img = new Image(); img.onload = () => { const tempCanvas = document.createElement('canvas'); tempCanvas.width = 64; tempCanvas.height = 64; const tCtx = tempCanvas.getContext('2d'); tCtx.drawImage(img, 0, 0, 64, 64); base64Flag = tempCanvas.toDataURL('image/png'); }; img.src = ev.target.result; }; reader.readAsDataURL(file); }
+});
+
+// ЛОГИКА КОМНАТ (СЕРВЕРОВ)
+window.createRoom = function() {
+    const presetName = document.getElementById('presetNameInput').value;
+    socket.emit('createRoom', { presetName }, (res) => {
+        if (res.success) {
+            currentRoomId = res.roomId;
+            document.getElementById('createRoomPanel').style.display = 'none';
+            document.getElementById('countryPanel').style.display = 'block';
+            document.getElementById('displaySetupRoomCode').innerText = res.roomId;
+            document.getElementById('myRoomCode').innerText = res.roomId;
+        }
+    });
+}
+
+window.joinRoom = function() {
+    const code = document.getElementById('roomCodeInput').value.toUpperCase();
+    socket.emit('joinRoom', code, (res) => {
+        if (res.success) {
+            currentRoomId = code;
+            document.getElementById('joinRoomPanel').style.display = 'none';
+            document.getElementById('countryPanel').style.display = 'block';
+            document.getElementById('displaySetupRoomCode').innerText = code;
+            document.getElementById('myRoomCode').innerText = code;
+        } else {
+            alert(res.msg || "Комната не найдена!");
+        }
+    });
+}
+
+document.getElementById('savePresetBtn')?.addEventListener('click', () => {
+    const presetName = prompt("Введите название заготовки (карты) для сохранения:");
+    if (presetName && presetName.trim() !== "") {
+        socket.emit('savePreset', presetName.trim());
+    }
 });
 
 socket.on('initLobby', (cList) => {
@@ -64,9 +95,6 @@ socket.on('joinSuccess', (cId) => {
     isPlaying = true;
 });
 
-window.prepareBuild = function(type) { buildMode = type; launchMode = null; showMsg(`Выберите место для постройки`); }
-window.prepareLaunch = function(type) { launchMode = type; buildMode = null; selectedSilo = null; showMsg(`Кликните ЛКМ по своей Ракетной Шахте`); }
-
 window.updateDiploList = function() {
     const sel = document.getElementById('diploTarget'); if(!sel) return;
     sel.innerHTML = '';
@@ -84,8 +112,8 @@ window.updateDiploList = function() {
 window.openTradeModal = function() { updateDiploList(); document.getElementById('tradeModal').style.display = 'block'; }
 window.sendTrade = function() {
     const target = document.getElementById('diploTarget').value;
-    const give = { money: parseInt(document.getElementById('tradeGiveMoney').value||0), keys: parseInt(document.getElementById('tradeGiveKeys').value||0), mil: parseInt(document.getElementById('tradeGiveMil').value||0), regionId: document.getElementById('tradeGiveRegion').value };
-    const take = { money: parseInt(document.getElementById('tradeTakeMoney').value||0), keys: parseInt(document.getElementById('tradeTakeKeys').value||0), mil: parseInt(document.getElementById('tradeTakeMil').value||0), regionId: document.getElementById('tradeTakeRegion').value };
+    const give = { money: parseInt(document.getElementById('tradeGiveMoney').value||0), mil: parseInt(document.getElementById('tradeGiveMil').value||0), regionId: document.getElementById('tradeGiveRegion').value };
+    const take = { money: parseInt(document.getElementById('tradeTakeMoney').value||0), mil: parseInt(document.getElementById('tradeTakeMil').value||0), regionId: document.getElementById('tradeTakeRegion').value };
     socket.emit('proposeTrade', { targetId: target, give, take });
     document.getElementById('tradeModal').style.display = 'none'; showMsg("Предложение отправлено");
 }
@@ -93,7 +121,7 @@ window.sendTrade = function() {
 let activeIncomingTrade = null;
 socket.on('incomingTrade', (data) => {
     activeIncomingTrade = data.tradeId;
-    document.getElementById('incomingTradeDesc').innerText = `${data.fromName} предлагает:\nДает: ${data.give.money}$, ${data.give.keys}🔧, ${data.give.mil}⚔️\nТребует: ${data.take.money}$, ${data.take.keys}🔧, ${data.take.mil}⚔️`;
+    document.getElementById('incomingTradeDesc').innerText = `${data.fromName} предлагает:\nДает: ${data.give.money}$, ${data.give.mil}⚔️\nТребует: ${data.take.money}$, ${data.take.mil}⚔️`;
     document.getElementById('incomingTradeModal').style.display = 'block';
 });
 document.getElementById('acceptTradeBtn')?.addEventListener('click', () => { socket.emit('resolveTrade', { tradeId: activeIncomingTrade, accept: true }); document.getElementById('incomingTradeModal').style.display = 'none'; });
@@ -118,15 +146,13 @@ document.getElementById('upgradeBtn')?.addEventListener('click', () => { if (cli
 document.getElementById('upgradeDefBtn')?.addEventListener('click', () => { if (clickedRegionId) socket.emit('upgradeDefense', clickedRegionId); });
 document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
 
-socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; buildings = data.buildings||{}; rockets = data.rockets||{}; });
-socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; buildings = data.buildings||{}; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); });
+socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; });
+socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); });
 socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
 socket.on('updateResources', (c) => { countries = c; updateUI(); updateRegionPanel(); });
 socket.on('cellUpdate', (data) => { territory[data.key] = data.cell; regions = data.regions; if (data.countries) countries = data.countries; updateUI(); updateRegionPanel(); });
 socket.on('batchCellUpdate', (data) => { for (const key in data.cells) { territory[key] = data.cells[key]; } regions = data.regions; if (data.countries) countries = data.countries; updateUI(); updateRegionPanel(); });
 socket.on('syncArmies', (a) => { armies = a; for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } } });
-socket.on('syncBuildings', (b) => { buildings = b; });
-socket.on('syncRockets', (r) => { rockets = r; });
 
 function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
 
@@ -138,7 +164,13 @@ function gameLoop() {
     if (camera.x < minX) camera.x = minX; if (camera.y < minY) camera.y = minY;
 
     for(let id in visualArmies) {
-        if(armies[id]) { visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4; visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4; visualArmies[id].count = armies[id].count; visualArmies[id].owner = armies[id].owner; } else { delete visualArmies[id]; }
+        if(armies[id]) { 
+            // Плавное следование за сервером (без рывков)
+            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4; 
+            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4; 
+            visualArmies[id].count = armies[id].count; 
+            visualArmies[id].owner = armies[id].owner; 
+        } else { delete visualArmies[id]; }
     }
     drawMap(); requestAnimationFrame(gameLoop);
 }
@@ -154,7 +186,6 @@ function updateUI() {
         const incEl = document.getElementById('myIncome'); if (incEl) { incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome); incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; }
         const milEl = document.getElementById('myMilitary'); if(milEl) milEl.innerText = Math.floor(countries[myId].military).toLocaleString();
         const capEl = document.getElementById('myCap'); if(capEl) capEl.innerText = countries[myId].cap.toLocaleString();
-        const keysEl = document.getElementById('myKeys'); if(keysEl) keysEl.innerText = Math.floor(countries[myId].keys).toLocaleString();
     }
 }
 
@@ -206,19 +237,19 @@ function drawMap() {
     ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
     if (bgMap.complete && bgMap.naturalWidth > 0) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
+    // ОТРИСОВКА ЦВЕТА ЗЕМЛИ (ТЕПЕРЬ БЕЗ КРАСНОГО ТИНТА, ЗАХВАТ МГНОВЕННЫЙ)
     ctx.globalAlpha = 0.55; 
     for (const key in territory) {
         const owner = countries[territory[key].owner];
         if (owner) {
             const [ix, iy] = key.split('_').map(Number);
             ctx.fillStyle = owner.color; ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            if (territory[key].captureProgress > 0) { ctx.fillStyle = 'rgba(255, 0, 0, 0.4)'; ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE, TILE_SIZE); }
         }
     }
 
     ctx.globalAlpha = 1.0;
     
-    // ОТРИСОВКА ЧЕРНЫХ ГРАНИЦ И РЕГИОНОВ
+    // ОТРИСОВКА ГРАНИЦ И РЕГИОНОВ
     const LINE_W = 1.5; const step = TILE_SIZE;
     const getCellOwner = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.owner : null; };
     const getCellRegion = (nx, ny) => { const nCell = territory[`${nx}_${ny}`]; return nCell ? nCell.regionId : null; };
@@ -235,13 +266,12 @@ function drawMap() {
         if (getCellOwner(ix - 1, iy) === owner && getCellRegion(ix - 1, iy) !== cell.regionId) ctx.fillRect(x, y, 1, step);
     }
 
-    // ОТРИСОВКА НАЗВАНИЙ РЕГИОНОВ И КРУГА ОСАДЫ
+    // ОТРИСОВКА СТОЛИЦ РЕГИОНОВ (И КРУГА ОСАДЫ)
     for (const rId in regions) {
         const reg = regions[rId];
         if (reg.cityX !== undefined) {
             const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
             
-            // КРУГ ЗАХВАТА
             if (reg.siegeProgress > 0) {
                 ctx.beginPath();
                 ctx.arc(tx, ty, 12 / camera.zoom, -Math.PI/2, (-Math.PI/2) + ((reg.siegeProgress / 90) * Math.PI * 2));
@@ -264,41 +294,7 @@ function drawMap() {
         ctx.lineTo(lassoPoints[0].x, lassoPoints[0].y); ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2 / camera.zoom; ctx.stroke();
     }
 
-    // ОТРИСОВКА РАДАРОВ (Зона покрытия)
-    for (let bId in buildings) {
-        let b = buildings[bId];
-        if (b.type.startsWith('radar') && b.owner === myId) {
-            ctx.fillStyle = 'rgba(52, 152, 219, 0.15)'; ctx.beginPath(); ctx.arc(b.x, b.y, 150, 0, Math.PI*2); ctx.fill();
-        }
-    }
-
-    // ОТРИСОВКА ТОЧЕК ЗДАНИЙ 
-    for (let bId in buildings) {
-        let b = buildings[bId];
-        let color = countries[b.owner] ? countries[b.owner].color : '#fff';
-        
-        ctx.fillStyle = color; ctx.strokeStyle = '#000'; ctx.lineWidth = 1/camera.zoom;
-        ctx.beginPath(); ctx.arc(b.x, b.y, 3/camera.zoom, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-        
-        let bName = "ЗДАНИЕ";
-        if(b.type === 'factory') bName = "ФАБРИКА";
-        else if(b.type.startsWith('radar')) bName = "РАДАР";
-        else if(b.type.startsWith('pvo')) bName = "ПВО";
-        else if(b.type === 'silo') bName = "ШАХТА";
-
-        ctx.fillStyle = 'white'; ctx.font = `bold ${8 / camera.zoom}px Arial`; ctx.textAlign = 'center'; ctx.strokeStyle = 'black'; ctx.lineWidth = 2/camera.zoom;
-        ctx.strokeText(bName, b.x, b.y - (6 / camera.zoom)); ctx.fillText(bName, b.x, b.y - (6 / camera.zoom));
-
-        if (selectedSilo === bId) { ctx.strokeStyle = '#f1c40f'; ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, Math.PI*2); ctx.stroke(); }
-    }
-
-    // ОТРИСОВКА РАКЕТ
-    for (let rId in rockets) {
-        let r = rockets[rId];
-        ctx.fillStyle = '#e74c3c'; ctx.beginPath(); ctx.arc(r.x, r.y, 2/camera.zoom, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)'; ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - (r.targetX-r.x)*0.1, r.y - (r.targetY-r.y)*0.1); ctx.stroke();
-    }
-
+    // ОТРИСОВКА АРМИЙ
     const radius = 8 / camera.zoom; 
     for(const id in visualArmies) {
         const army = visualArmies[id]; const owner = countries[army.owner]; if (!owner) continue;
@@ -312,7 +308,8 @@ function drawMap() {
         ctx.strokeText(countText, army.x, army.y + radius + (8 / camera.zoom)); ctx.fillText(countText, army.x, army.y + radius + (8 / camera.zoom));
     }
 
-    if (isSelecting && !buildMode && !launchMode && !isDrawingRegion) {
+    // ОТРИСОВКА КВАДРАТА ВЫДЕЛЕНИЯ
+    if (isSelecting && !isDrawingRegion) {
         ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1 / camera.zoom;
         const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
         ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
@@ -340,29 +337,13 @@ function getWorldCoords(e) {
 canvas.addEventListener('mousedown', (e) => { 
     const world = getWorldCoords(e);
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
-    
-    // СТРОИТЕЛЬСТВО
-    if (e.button === 0 && buildMode) {
-        socket.emit('buildStructure', { type: buildMode, cx: Math.floor(world.x/TILE_SIZE), cy: Math.floor(world.y/TILE_SIZE) });
-        buildMode = null; showMsg("Стройка начата"); return;
-    }
-
-    // ЗАПУСК РАКЕТ
-    if (launchMode) {
-        if (e.button === 0) {
-            for(let bId in buildings) { if (buildings[bId].type === 'silo' && buildings[bId].owner === myId && Math.hypot(buildings[bId].x - world.x, buildings[bId].y - world.y) < 15) { selectedSilo = bId; showMsg("Шахта выбрана! ПКМ по цели."); return; } }
-        } else if (e.button === 2 && selectedSilo) {
-            socket.emit('launchRocket', { siloId: selectedSilo, rocketType: launchMode, targetX: world.x, targetY: world.y });
-            launchMode = null; selectedSilo = null; showMsg("ПУСК!"); return;
-        }
-    }
 
     if (e.button === 0) {
         if (!isSpawned) { socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) }); return; }
         if (isDrawingRegion) { lassoPoints = [world]; return; }
         isSelecting = true; selectionBox.startX = world.x; selectionBox.startY = world.y; selectionBox.endX = world.x; selectionBox.endY = world.y;
     }
-    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion && !launchMode) { socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y }); }
+    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) { socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y }); }
 });
 
 canvas.addEventListener('mousemove', (e) => { 
