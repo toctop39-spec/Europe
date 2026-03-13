@@ -30,21 +30,15 @@
         .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
 
         #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; font-family: 'Arial', sans-serif; display: none; }
-        
-        #tradeModal { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #1a1a1a; border: 2px solid #f39c12; padding: 20px; width: 500px; z-index: 2000; font-family: 'Arial'; }
-        .trade-section { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 15px; }
-        .trade-col { flex: 1; background: #222; padding: 10px; border: 1px solid #444; }
-        .trade-col input, .trade-col select { width: 100%; box-sizing: border-box; background: #111; color: #fff; border: 1px solid #555; margin-bottom: 5px; padding: 5px; }
-        
-        #newsOverlay { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #ecf0f1; color: #2c3e50; padding: 20px; border: 4px solid #34495e; width: 400px; text-align: center; z-index: 1000; font-family: 'Times New Roman', serif; }
     </style>
 </head>
 <body>
     <div id="setupScreen">
         <div id="roomPanel" class="panel">
             <h2>Глобальная Стратегия</h2>
-            <button onclick="showCreateRoom()">Создать сервер</button>
+            <button onclick="showCreateRoom()">Создать сервер (Играть)</button>
             <button onclick="showJoinRoom()">Присоединиться по коду</button>
+            <button onclick="startEditor()" style="background:#8e44ad; margin-top:20px;">Редактор заготовок</button>
         </div>
 
         <div id="createRoomPanel" class="panel" style="display:none;">
@@ -64,11 +58,9 @@
         <div id="countryPanel" class="panel" style="display:none;">
             <h2>Выбор страны</h2>
             <p style="margin-top:0; font-size:12px; color:#aaa;">Код комнаты: <b id="displaySetupRoomCode" style="color:#f1c40f; font-size:16px;"></b></p>
-            <select id="countrySelect"><option value="new">-- Новая страна --</option></select>
+            <select id="countrySelect"><option value="new">-- Новая (Пустошь) --</option></select>
             <div id="newCountryForm">
                 <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
-                <input type="file" id="countryFlagFile" accept="image/*">
-                <label style="display:block; font-size: 12px; margin-bottom: 5px;">Цвет границ:</label>
                 <input type="color" id="countryColor" value="#2b5e8a" style="height:40px; cursor:pointer;">
             </div>
             <button id="joinBtn">Начать игру</button>
@@ -93,49 +85,30 @@
         <div class="tabs">
             <button class="tab-btn active" onclick="switchTab('tab-manage')">Управление</button>
             <button class="tab-btn" onclick="switchTab('tab-diplomacy')">Дипломатия</button>
+            <button class="tab-btn" id="editorTabBtn" style="display:none;" onclick="switchTab('tab-editor')">Редактор</button>
         </div>
         
         <div id="tab-manage" class="tab-content active">
             <button id="drawRegionBtn" class="btn-civil">Сформировать регион</button>
-            <button id="savePresetBtn" class="btn-civil" style="background:#f39c12; color:#111;">💾 Сохранить карту как заготовку</button>
-            <button id="disbandBtn" class="btn-civil" style="background:#8e44ad; display:none;">Распустить армию</button>
             <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">ЛКМ - выбор, ПКМ - движение войск.</p>
         </div>
 
         <div id="tab-diplomacy" class="tab-content">
-            <select id="diploTarget" style="width:100%; padding:5px; background:#222; color:white; border:1px solid #555; margin-bottom:10px;"></select>
-            <button class="btn-civil" onclick="openTradeModal()">Предложить сделку</button>
+            <p style="font-size: 11px; color: #aaa;">Дипломатия отключена в этой версии интерфейса.</p>
         </div>
-    </div>
 
-    <div id="tradeModal">
-        <h3 style="margin-top:0; color:#f39c12;">Торговое соглашение</h3>
-        <div class="trade-section">
-            <div class="trade-col">
-                <h4 style="margin-top:0;">Я отдаю:</h4>
-                <label>Деньги ($)</label><input type="number" id="tradeGiveMoney" value="0" min="0">
-                <label>Войска (⚔️)</label><input type="number" id="tradeGiveMil" value="0" min="0">
-                <label>Регион</label><select id="tradeGiveRegion"><option value="">-- Нет --</option></select>
-            </div>
-            <div class="trade-col">
-                <h4 style="margin-top:0;">Я требую:</h4>
-                <label>Деньги ($)</label><input type="number" id="tradeTakeMoney" value="0" min="0">
-                <label>Войска (⚔️)</label><input type="number" id="tradeTakeMil" value="0" min="0">
-                <label>Регион</label><select id="tradeTakeRegion"><option value="">-- Нет --</option></select>
-            </div>
-        </div>
-        <div style="display:flex; gap:10px;">
-            <button class="btn-civil" style="background:#27ae60;" onclick="sendTrade()">Отправить</button>
-            <button class="btn-military" onclick="document.getElementById('tradeModal').style.display='none'" style="width:100%; padding:8px; color:white; border:none; cursor:pointer; font-weight:bold;">Отмена</button>
-        </div>
-    </div>
-
-    <div id="incomingTradeModal" style="display: none; position: absolute; top: 10%; left: 50%; transform: translateX(-50%); background: #1a1a1a; border: 2px solid #3498db; padding: 20px; width: 400px; z-index: 2000; font-family: 'Arial'; text-align: center;">
-        <h3 style="margin-top:0; color:#3498db;">Входящее предложение!</h3>
-        <p id="incomingTradeDesc" style="font-size: 14px; text-align: left; background: #222; padding: 10px;"></p>
-        <div style="display:flex; gap:10px; margin-top: 15px;">
-            <button class="btn-civil" style="background:#27ae60;" id="acceptTradeBtn">ПРИНЯТЬ</button>
-            <button class="btn-military" id="declineTradeBtn" style="width:100%; padding:8px; color:white; border:none; cursor:pointer; font-weight:bold;">ОТКАЗАТЬСЯ</button>
+        <div id="tab-editor" class="tab-content">
+            <h4 style="margin-top:0;">Создать новую страну</h4>
+            <input type="text" id="edCountryName" placeholder="Название страны" style="width:100%; box-sizing:border-box; padding:5px; margin-bottom:5px; background:#222; color:#fff; border:1px solid #555;">
+            <input type="color" id="edCountryColor" value="#e74c3c" style="width:100%; height:30px; margin-bottom:5px; cursor:pointer;">
+            <button class="btn-civil" onclick="edCreateCountry()">Создать и переключиться</button>
+            
+            <hr style="border-color:#444;">
+            <h4 style="margin-bottom:5px;">Список стран (Клик для смены):</h4>
+            <div id="edCountryList" style="max-height:150px; overflow-y:auto; margin-bottom:10px;"></div>
+            
+            <hr style="border-color:#444;">
+            <button class="btn-civil" style="background:#f39c12; color:#111;" onclick="edSaveAndExit()">💾 Сохранить пресет и выйти</button>
         </div>
     </div>
 
@@ -146,21 +119,10 @@
         </div>
         <p style="font-size: 13px; color: #ccc;">Владелец: <span id="regOwner"></span></p>
         <p style="font-size: 13px;">Инфраструктура: ур. <span id="regLevel">1</span>/10 (<span id="regIncome"></span> $/с)</p>
-        <p style="font-size: 13px;">Оборона (Укрепления): ур. <span id="regDefLevel">0</span>/10</p>
-        
-        <button id="upgradeBtn" class="btn-civil" style="background:#27ae60; font-size: 12px;">Улучшить Инфраструктуру</button>
-        <button id="upgradeDefBtn" class="btn-civil" style="background:#c0392b; font-size: 12px; margin-bottom: 15px;">Укрепить Оборону</button>
-        
         <hr style="border-color: #444;">
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
-        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска (15 сек)</button>
+        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска</button>
         <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
-    </div>
-
-    <div id="newsOverlay">
-        <div class="news-title" id="newsTitle" style="font-weight:bold; font-size:20px;">СРОЧНЫЕ НОВОСТИ</div>
-        <p id="newsText" style="font-size: 16px; margin-bottom: 20px;"></p>
-        <button onclick="document.getElementById('newsOverlay').style.display='none'" style="background: #34495e; color: white; border: none; padding: 10px 20px; cursor: pointer; font-weight:bold;">Принять</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -171,9 +133,6 @@
             document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
             event.target.classList.add('active');
-            if (tabId === 'tab-diplomacy' && typeof updateDiploList === 'function') {
-                updateDiploList();
-            }
         }
         function showCreateRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('createRoomPanel').style.display = 'block'; }
         function showJoinRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'block'; }
