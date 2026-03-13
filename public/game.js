@@ -27,6 +27,40 @@ const keys = { w: false, a: false, s: false, d: false };
 window.addEventListener('keydown', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = true; if (key === 'a' || key === 'ф') keys.a = true; if (key === 's' || key === 'ы') keys.s = true; if (key === 'd' || key === 'в') keys.d = true; });
 window.addEventListener('keyup', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = false; if (key === 'a' || key === 'ф') keys.a = false; if (key === 's' || key === 'ы') keys.s = false; if (key === 'd' || key === 'в') keys.d = false; });
 
+// ОБРАБОТКА ФЛАГОВ
+let base64Flag = null; 
+let edBase64Flag = null; 
+const flagCache = {}; 
+
+function getFlagImage(cId, base64Str) { 
+    if (!flagCache[cId]) { const img = new Image(); img.src = base64Str; flagCache[cId] = img; } 
+    return flagCache[cId]; 
+}
+
+// Загрузка флага в обычном лобби
+document.getElementById('countryFlagFile')?.addEventListener('change', (e) => {
+    const file = e.target.files[0]; 
+    if (file) { 
+        const reader = new FileReader(); 
+        reader.onload = (ev) => { 
+            const img = new Image(); img.onload = () => { const tempCanvas = document.createElement('canvas'); tempCanvas.width = 64; tempCanvas.height = 64; const tCtx = tempCanvas.getContext('2d'); tCtx.drawImage(img, 0, 0, 64, 64); base64Flag = tempCanvas.toDataURL('image/png'); }; 
+            img.src = ev.target.result; 
+        }; reader.readAsDataURL(file); 
+    }
+});
+
+// Загрузка флага в редакторе
+document.getElementById('edCountryFlagFile')?.addEventListener('change', (e) => {
+    const file = e.target.files[0]; 
+    if (file) { 
+        const reader = new FileReader(); 
+        reader.onload = (ev) => { 
+            const img = new Image(); img.onload = () => { const tempCanvas = document.createElement('canvas'); tempCanvas.width = 64; tempCanvas.height = 64; const tCtx = tempCanvas.getContext('2d'); tCtx.drawImage(img, 0, 0, 64, 64); edBase64Flag = tempCanvas.toDataURL('image/png'); }; 
+            img.src = ev.target.result; 
+        }; reader.readAsDataURL(file); 
+    }
+});
+
 // === МЕНЮ И ЛОББИ ===
 window.createRoom = function() {
     const presetName = document.getElementById('presetNameInput').value;
@@ -67,8 +101,12 @@ document.getElementById('joinBtn')?.addEventListener('click', () => {
     const selectVal = document.getElementById('countrySelect').value;
     if (selectVal === 'new') {
         const name = document.getElementById('countryName').value || 'Империя'; const color = document.getElementById('countryColor').value;
-        const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
-        socket.emit('joinGame', { isNew: true, name, color, flag: tCnv.toDataURL() });
+        let finalFlag = base64Flag;
+        if (!finalFlag) {
+            const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
+            finalFlag = tCnv.toDataURL();
+        }
+        socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag });
     } else { socket.emit('joinGame', { isNew: false, countryId: selectVal }); }
 });
 
@@ -98,8 +136,17 @@ window.startEditor = function() {
 window.edCreateCountry = function() {
     const name = document.getElementById('edCountryName').value || 'Новая Страна';
     const color = document.getElementById('edCountryColor').value;
-    const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
-    socket.emit('joinGame', { isNew: true, name, color, flag: tCnv.toDataURL() });
+    
+    let finalFlag = edBase64Flag;
+    if (!finalFlag) {
+        const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
+        finalFlag = tCnv.toDataURL();
+    }
+    
+    socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag });
+    edBase64Flag = null; // Очищаем после создания
+    const fileInput = document.getElementById('edCountryFlagFile');
+    if(fileInput) fileInput.value = "";
 }
 
 window.edSwitchCountry = function(cId) { socket.emit('switchCountry', cId); }
