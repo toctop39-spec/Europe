@@ -32,7 +32,7 @@
         .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
 
         #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; }
-        #armyPanel { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 10px 20px; z-index: 10; display: none; text-align: center; }
+        #armyPanel { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; text-align: center; border-radius: 5px; }
     </style>
 </head>
 <body>
@@ -129,8 +129,12 @@
     </div>
 
     <div id="armyPanel">
-        <span style="font-weight: bold; margin-right: 15px;">Выбрана армия (<span id="armyCount"></span> ед.)</span>
-        <button id="disbandBtn" style="background:#c0392b; color:white; border:none; padding:5px 10px; cursor:pointer; font-weight:bold; border-radius:3px;">Распустить</button>
+        <div style="font-weight: bold; margin-bottom: 10px; font-size: 15px;">Дивизия: <span id="armyCount" style="color:#f1c40f;"></span> ед.</div>
+        <div style="display: flex; gap: 10px;">
+            <button id="autoAttackBtn" style="background:#f39c12; color:#111; border:none; padding:8px 15px; cursor:pointer; font-weight:bold; border-radius:3px; flex:1;">Авто-Атака</button>
+            <button id="disbandBtn" style="background:#c0392b; color:white; border:none; padding:8px 15px; cursor:pointer; font-weight:bold; border-radius:3px; flex:1;">Распустить</button>
+        </div>
+        <div id="autoAttackTip" style="font-size: 11px; color: #f39c12; margin-top: 8px; display: none;">Кликните на вражеский город или армию для выбора цели</div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
