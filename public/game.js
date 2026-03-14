@@ -104,7 +104,7 @@ socket.on('syncArmies', (a) => {
         visualArmies[id].autoTarget = armies[id].autoTarget; 
     } 
     selectedArmies = selectedArmies.filter(id => armies[id]);
-    updateArmyPanel();
+    updateArmyPanel(); // <--- Из-за этого вызова сбрасывалась кнопка
 });
 
 function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
@@ -164,11 +164,10 @@ function updateRegionPanel() {
     }
 }
 
-// ТЕПЕРЬ ПОДДЕРЖИВАЕТ МАССИВ ВЫДЕЛЕННЫХ АРМИЙ
+// === ИСПРАВЛЕННАЯ ПАНЕЛЬ АРМИИ ===
 function updateArmyPanel() {
     const ap = document.getElementById('armyPanel'); if (!ap) return;
     
-    // Проверяем, что ВСЕ выделенные армии принадлежат нам
     const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
     
     if (mySelected.length > 0 && mySelected.length === selectedArmies.length) {
@@ -177,15 +176,18 @@ function updateArmyPanel() {
         let totalCount = 0;
         mySelected.forEach(id => totalCount += armies[id].count);
         
-        // Показываем суммарное количество войск
+        // Показываем суммарное количество войск (обновляется без сброса кнопки)
         document.getElementById('armyCount').innerText = Math.floor(totalCount) + (mySelected.length > 1 ? ` (${mySelected.length} див.)` : ' ед.');
         
-        isSelectingAutoAttackTarget = false;
-        document.getElementById('autoAttackBtn').style.background = '#f39c12';
-        document.getElementById('autoAttackBtn').innerText = 'Авто-Атака';
-        document.getElementById('autoAttackTip').style.display = 'none';
     } else { 
         ap.style.display = 'none'; 
+        // Сбрасываем режим выбора цели ТОЛЬКО когда мы сняли выделение с армий
+        isSelectingAutoAttackTarget = false;
+        if (document.getElementById('autoAttackBtn')) {
+            document.getElementById('autoAttackBtn').style.background = '#f39c12';
+            document.getElementById('autoAttackBtn').innerText = 'Авто-Атака';
+            document.getElementById('autoAttackTip').style.display = 'none';
+        }
     }
 }
 
