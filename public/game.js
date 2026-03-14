@@ -140,6 +140,7 @@ document.getElementById('closeRegBtn')?.addEventListener('click', () => { clicke
 document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
 
 document.getElementById('upgradeRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
+document.getElementById('upgradeRoadBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRoads', clickedRegionId); });
 
 document.getElementById('disbandBtn')?.addEventListener('click', () => { 
     if (selectedArmies.length > 0) { 
