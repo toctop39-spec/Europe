@@ -3,36 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Strategy</title>
+    <title>Global Strategy - HoI4 Style</title>
     <style>
-        body { background: #111; color: #ddd; font-family: 'Arial', sans-serif; margin: 0; overflow: hidden; user-select: none; }
+        body { background: #0a0a0a; color: #dcdde1; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; overflow: hidden; user-select: none; }
         canvas { display: block; }
         
-        #topBar { background: linear-gradient(to bottom, #333, #1a1a1a); border-bottom: 2px solid #555; padding: 5px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; position: absolute; width: 100%; box-sizing: border-box; z-index: 10; }
-        .stat-box { background: rgba(0,0,0,0.5); border: 1px solid #444; padding: 4px 8px; border-radius: 3px; display: flex; align-items: center; gap: 5px; }
-        .stat-icon { font-size: 14px; }
+        /* HOI4 Top Bar Style */
+        #topBar { background: linear-gradient(180deg, #2f353a, #1e2224); border-bottom: 2px solid #111; padding: 4px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; position: absolute; width: 100%; box-sizing: border-box; z-index: 10; box-shadow: 0 4px 6px rgba(0,0,0,0.5); }
+        .stat-box { background: linear-gradient(180deg, #1c1e1f, #151718); border: 1px solid #333; padding: 4px 10px; border-radius: 2px; display: flex; align-items: center; gap: 6px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.8); }
+        .stat-icon { font-size: 14px; text-shadow: 0 0 5px rgba(255,255,255,0.2); }
         
-        #newsBox { position: absolute; top: 50px; left: 50%; transform: translateX(-50%); background: rgba(192, 57, 43, 0.9); border: 1px solid #e74c3c; color: white; padding: 10px 20px; border-radius: 5px; font-weight: bold; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.5s; }
+        #newsBox { position: absolute; top: 50px; left: 50%; transform: translateX(-50%); background: linear-gradient(180deg, #c0392b, #8e44ad); border: 2px solid #000; color: white; padding: 10px 25px; border-radius: 2px; font-weight: bold; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.5s; box-shadow: 0 5px 15px rgba(0,0,0,0.5); text-transform: uppercase; letter-spacing: 1px; }
 
-        #setupScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-        .panel { background: #1a1a1a; padding: 30px; border-radius: 5px; border: 1px solid #444; text-align: center; width: 350px; }
-        .panel h2 { margin-top: 0; color: #ecf0f1; }
-        .panel input, .panel select { padding: 10px; width: 90%; box-sizing: border-box; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 3px; }
-        .panel button { padding: 12px; width: 100%; background: #2c3e50; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
-        .panel button:hover { background: #34495e; }
-        .btn-military { background: #c0392b !important; } .btn-military:hover { background: #e74c3c !important; }
+        #setupScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, rgba(44,62,80,0.9) 0%, rgba(0,0,0,0.95) 100%); display: flex; justify-content: center; align-items: center; z-index: 1000; }
         
-        #sideMenu { position: absolute; left: 15px; top: 60px; width: 280px; background: rgba(20,20,20,0.95); border: 1px solid #333; z-index: 10; display: none; }
-        .tabs { display: flex; border-bottom: 1px solid #444; }
-        .tab-btn { flex: 1; padding: 10px; background: #222; color: #aaa; border: none; cursor: pointer; font-size: 12px; font-weight: bold; }
-        .tab-btn.active { background: #3498db; color: white; }
+        /* Panels with Animations */
+        @keyframes slideInLeft { from { transform: translateX(-30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideInRight { from { transform: translateX(30px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes slideUp { from { transform: translate(-50%, 30px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+        @keyframes popIn { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+        .panel { background: #1e2224; padding: 30px; border-radius: 3px; border: 2px solid #333; box-shadow: inset 0 0 20px rgba(0,0,0,0.8), 0 10px 30px rgba(0,0,0,0.7); text-align: center; width: 350px; animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .panel h2 { margin-top: 0; color: #bdc3c7; text-transform: uppercase; letter-spacing: 2px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .panel input, .panel select { padding: 10px; width: 90%; box-sizing: border-box; margin-bottom: 15px; background: #111; color: white; border: 1px solid #444; border-radius: 2px; font-family: inherit; }
+        .panel button { padding: 12px; width: 100%; background: linear-gradient(180deg, #34495e, #2c3e50); color: white; border: 1px solid #111; cursor: pointer; font-weight: bold; text-transform: uppercase; transition: all 0.2s; box-shadow: inset 0 1px 0 rgba(255,255,255,0.1); margin-bottom: 10px; }
+        .panel button:hover { background: linear-gradient(180deg, #3b536b, #34495e); transform: translateY(-1px); }
+        .panel button:active { transform: translateY(1px); box-shadow: inset 0 2px 5px rgba(0,0,0,0.5); }
+        .btn-military { background: linear-gradient(180deg, #c0392b, #a53125) !important; } .btn-military:hover { background: linear-gradient(180deg, #d35400, #c0392b) !important; }
+        
+        /* Sidebar Menus */
+        #sideMenu { position: absolute; left: 10px; top: 50px; width: 280px; background: #1e2224; border: 2px solid #111; box-shadow: inset 0 0 10px rgba(0,0,0,0.8), 5px 5px 15px rgba(0,0,0,0.5); z-index: 10; display: none; animation: slideInLeft 0.4s ease-out; }
+        .tabs { display: flex; border-bottom: 2px solid #111; background: #151718; }
+        .tab-btn { flex: 1; padding: 10px; background: transparent; color: #7f8c8d; border: none; cursor: pointer; font-size: 11px; font-weight: bold; text-transform: uppercase; transition: 0.2s; }
+        .tab-btn.active { background: #2f353a; color: #ecf0f1; border-bottom: 2px solid #3498db; }
         .tab-content { padding: 15px; display: none; max-height: 400px; overflow-y: auto; }
         .tab-content.active { display: block; }
         
-        .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
+        .btn-civil { width: 100%; padding: 10px; background: linear-gradient(180deg, #2980b9, #2471a3); color: white; border: 1px solid #111; cursor: pointer; margin-bottom: 10px; font-weight: bold; transition: 0.2s; text-transform: uppercase; font-size: 11px; }
+        .btn-civil:hover { background: linear-gradient(180deg, #3498db, #2980b9); filter: brightness(1.1); }
+        .btn-civil:disabled { background: #444 !important; color: #777; cursor: not-allowed; filter: none; }
 
-        #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; }
-        #armyPanel { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; text-align: center; border-radius: 5px; }
+        #regionPanel { position: absolute; right: 10px; top: 50px; width: 280px; background: #1e2224; border: 2px solid #111; padding: 15px; z-index: 10; display: none; box-shadow: inset 0 0 10px rgba(0,0,0,0.8), -5px 5px 15px rgba(0,0,0,0.5); animation: slideInRight 0.4s ease-out; }
+        #armyPanel { position: absolute; bottom: 15px; left: 50%; background: #1e2224; border: 2px solid #111; padding: 15px; z-index: 10; display: none; text-align: center; box-shadow: inset 0 0 10px rgba(0,0,0,0.8), 0 5px 20px rgba(0,0,0,0.6); animation: slideUp 0.3s ease-out; transform: translateX(-50%); }
+        
+        hr { border-color: #333; margin: 15px 0; }
     </style>
 </head>
 <body>
@@ -43,7 +57,7 @@
             <h2>Глобальная Стратегия</h2>
             <button onclick="showCreateRoom()">Создать сервер</button>
             <button onclick="showJoinRoom()">Присоединиться</button>
-            <button onclick="startEditor()" style="background:#8e44ad; margin-top:20px;">Редактор заготовок</button>
+            <button onclick="startEditor()" style="background: linear-gradient(180deg, #8e44ad, #732d91); margin-top:20px;">Редактор заготовок</button>
         </div>
 
         <div id="createRoomPanel" class="panel" style="display:none;">
@@ -55,35 +69,35 @@
 
         <div id="joinRoomPanel" class="panel" style="display:none;">
             <h2>Присоединиться</h2>
-            <input type="text" id="roomCodeInput" placeholder="Код комнаты" maxlength="5" style="text-transform: uppercase;">
+            <input type="text" id="roomCodeInput" placeholder="Код комнаты" maxlength="5" style="text-transform: uppercase; text-align:center; font-size: 20px; font-weight:bold;">
             <button onclick="joinRoom()">Войти</button>
             <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
         </div>
 
         <div id="countryPanel" class="panel" style="display:none;">
-            <h2>Выбор страны</h2>
-            <p style="margin-top:0; font-size:12px; color:#aaa;">Код: <b id="displaySetupRoomCode" style="color:#f1c40f; font-size:16px;"></b></p>
-            <select id="countrySelect"><option value="new">-- Новая (Пустошь) --</option></select>
+            <h2>Выбор нации</h2>
+            <p style="margin-top:0; font-size:12px; color:#7f8c8d;">Сервер: <b id="displaySetupRoomCode" style="color:#f1c40f; font-size:16px;"></b></p>
+            <select id="countrySelect"><option value="new">-- Новая Нация --</option></select>
             <div id="newCountryForm">
                 <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
                 <input type="file" id="countryFlagFile" accept="image/*" style="width:90%; margin-bottom:5px;">
-                <input type="color" id="countryColor" value="#2b5e8a" style="width:90%; height:40px; cursor:pointer;">
+                <input type="color" id="countryColor" value="#2b5e8a" style="width:90%; height:40px; cursor:pointer; padding:2px;">
             </div>
-            <button id="joinBtn">Начать игру</button>
+            <button id="joinBtn" style="background: linear-gradient(180deg, #27ae60, #2ecc71); border-color:#1e8449;">Начать игру</button>
         </div>
     </div>
 
     <div id="topBar" style="display: none;">
         <div style="display: flex; align-items: center; gap: 10px;">
-            <img id="myFlagUI" style="width: 30px; height: 20px; border: 1px solid #fff; object-fit: cover;">
-            <span id="myName" style="font-weight: bold; font-size: 16px;"></span>
+            <img id="myFlagUI" style="width: 36px; height: 24px; border: 1px solid #000; box-shadow: 0 0 5px rgba(255,255,255,0.2); object-fit: cover;">
+            <span id="myName" style="font-weight: bold; font-size: 15px; text-transform: uppercase; letter-spacing: 1px;"></span>
         </div>
         <div style="display: flex; gap: 10px;">
-            <div class="stat-box" title="Код"><span class="stat-icon">🔑</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
+            <div class="stat-box" title="Сервер"><span class="stat-icon">📡</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
             <div class="stat-box" title="Площадь"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
             <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
             <div class="stat-box" title="Рекруты"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
-            <div class="stat-box" title="Экономика"><span class="stat-icon">💲</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>/с)</div>
+            <div class="stat-box" title="Снабжение"><span class="stat-icon">⚙️</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>/с)</div>
         </div>
     </div>
 
@@ -94,47 +108,51 @@
         </div>
         
         <div id="tab-manage" class="tab-content active">
-            <button id="drawRegionBtn" class="btn-civil">Сформировать регион (Лассо)</button>
-            <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">ЛКМ - выбор, ПКМ - марш армий.</p>
+            <button id="drawRegionBtn" class="btn-civil">Оформить новый регион</button>
+            <div style="background: #151718; border: 1px solid #333; padding: 10px; text-align: center; margin-top: 15px;">
+                <p id="systemMsg" style="font-size: 11px; color: #95a5a6; margin: 0;">ЛКМ - выбор армий/регионов.<br>ПКМ - перемещение войск.</p>
+            </div>
         </div>
 
         <div id="tab-editor" class="tab-content">
-            <h4 style="margin-top:0;">Создать новую страну</h4>
-            <input type="text" id="edCountryName" placeholder="Название" style="width:100%; box-sizing:border-box; padding:5px; margin-bottom:5px; background:#222; color:#fff; border:1px solid #555;">
+            <h4 style="margin-top:0; color:#bdc3c7;">Добавить страну-бота</h4>
+            <input type="text" id="edCountryName" placeholder="Название" style="width:100%; box-sizing:border-box; padding:8px; margin-bottom:5px; background:#111; color:#fff; border:1px solid #333;">
             <input type="file" id="edCountryFlagFile" accept="image/*" style="width:100%; box-sizing:border-box; margin-bottom:5px;">
-            <input type="color" id="edCountryColor" value="#e74c3c" style="width:100%; height:30px; margin-bottom:5px; cursor:pointer;">
-            <button class="btn-civil" onclick="edCreateCountry()">Создать и переключиться</button>
-            <hr style="border-color:#444;">
+            <input type="color" id="edCountryColor" value="#e74c3c" style="width:100%; height:30px; margin-bottom:10px; cursor:pointer;">
+            <button class="btn-civil" onclick="edCreateCountry()">Спавн страны</button>
+            <hr>
             <div id="edCountryList" style="max-height:150px; overflow-y:auto; margin-bottom:10px;"></div>
-            <button class="btn-civil" style="background:#f39c12; color:#111;" onclick="edSaveAndExit()">💾 Сохранить и выйти</button>
+            <button class="btn-civil" style="background:linear-gradient(180deg, #f39c12, #d35400); color:#111;" onclick="edSaveAndExit()">💾 Сохранить пресет</button>
         </div>
     </div>
 
     <div id="regionPanel">
         <div style="display: flex; align-items: center; justify-content: space-between;">
-            <h3 id="regName" style="margin: 0 0 10px 0;">Регион</h3>
-            <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; padding: 2px 5px;">✏️</button>
+            <h3 id="regName" style="margin: 0 0 10px 0; color:#ecf0f1; text-transform: uppercase;">Регион</h3>
+            <button id="renameRegBtn" style="background: none; border: none; color: #7f8c8d; cursor: pointer; font-size:16px;">✏️</button>
         </div>
-        <p style="font-size: 13px; color: #ccc;">Владелец: <span id="regOwner"></span></p>
-        <p style="font-size: 13px;">Инфраструктура: <span id="regLevel">1</span>/10</p>
-        <p style="font-size: 13px;">Укрепления (ДОТы): <span id="regDef">0</span>/5</p>
-        <hr style="border-color: #444;">
+        <p style="font-size: 12px; color: #bdc3c7; margin: 5px 0;">Контроллер: <span id="regOwner" style="color:#fff; font-weight:bold;"></span></p>
+        <p style="font-size: 12px; color: #bdc3c7; margin: 5px 0;">Инфраструктура: <b style="color:#f1c40f;"><span id="regLevel">1</span>/10</b></p>
         
-        <button id="upgradeRegBtn" class="btn-civil" style="background:#27ae60; padding:5px; font-size:12px; margin-bottom:5px;">Развить (5000$)</button>
-        <button id="defendRegBtn" class="btn-civil" style="background:#7f8c8d; padding:5px; font-size:12px; margin-bottom:10px;">Построить ДОТы (8000$)</button>
+        <hr>
         
-        <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
-        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска</button>
-        <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
+        <button id="upgradeRegBtn" class="btn-civil" style="background:linear-gradient(180deg, #27ae60, #1e8449);">Строить дороги (5000 ⚙️)</button>
+        
+        <div style="display:flex; gap:5px; margin-bottom: 5px; margin-top:15px;">
+            <input type="number" id="deployAmount" value="1000" min="100" step="100" style="flex:1; background:#111; color:#fff; border:1px solid #444; padding:8px; font-weight:bold; text-align:center;">
+            <button id="deployBtn" class="btn-civil" style="margin:0; flex:2; background:linear-gradient(180deg, #8e44ad, #732d91);">Развернуть дивизии</button>
+        </div>
+
+        <button id="closeRegBtn" style="width: 100%; padding: 8px; margin-top: 10px; background: linear-gradient(180deg, #555, #333); color: white; border: 1px solid #111; cursor:pointer; text-transform:uppercase; font-size:10px;">Закрыть</button>
     </div>
 
     <div id="armyPanel">
-        <div style="font-weight: bold; margin-bottom: 10px; font-size: 15px;">Выделено войск: <span id="armyCount" style="color:#f1c40f;"></span></div>
+        <div style="font-weight: bold; margin-bottom: 12px; font-size: 14px; text-transform:uppercase; border-bottom:1px solid #333; padding-bottom:5px;">Группа Армий: <span id="armyCount" style="color:#2ecc71;"></span></div>
         <div style="display: flex; gap: 10px;">
-            <button id="autoAttackBtn" style="background:#f39c12; color:#111; border:none; padding:8px 15px; cursor:pointer; font-weight:bold; border-radius:3px; flex:1;">Авто-Атака</button>
-            <button id="disbandBtn" style="background:#c0392b; color:white; border:none; padding:8px 15px; cursor:pointer; font-weight:bold; border-radius:3px; flex:1;">Распустить</button>
+            <button id="autoAttackBtn" style="background:linear-gradient(180deg, #f39c12, #d35400); color:#111; border:1px solid #000; padding:10px 15px; cursor:pointer; font-weight:bold; border-radius:2px; flex:1; text-transform:uppercase; box-shadow:inset 0 1px 0 rgba(255,255,255,0.3);">План Наступления</button>
+            <button id="disbandBtn" style="background:linear-gradient(180deg, #c0392b, #922b21); color:white; border:1px solid #000; padding:10px 15px; cursor:pointer; font-weight:bold; border-radius:2px; flex:1; text-transform:uppercase; box-shadow:inset 0 1px 0 rgba(255,255,255,0.2);">Расформировать</button>
         </div>
-        <div id="autoAttackTip" style="font-size: 11px; color: #f39c12; margin-top: 8px; display: none;">Кликните на вражескую территорию или армию</div>
+        <div id="autoAttackTip" style="font-size: 11px; color: #f39c12; margin-top: 10px; display: none; background:#111; padding:5px; border:1px solid #333;">Кликните ПКМ на врага для начала блицкрига</div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
