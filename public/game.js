@@ -70,7 +70,15 @@ document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (c
 
 document.getElementById('upgradeRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
 document.getElementById('defendRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('buildDefense', clickedRegionId); });
-document.getElementById('disbandBtn')?.addEventListener('click', () => { if (selectedArmies.length > 0) { socket.emit('disbandArmy', selectedArmies[0]); selectedArmies = []; updateArmyPanel(); } });
+
+// МАССОВЫЙ РОСПУСК АРМИЙ
+document.getElementById('disbandBtn')?.addEventListener('click', () => { 
+    if (selectedArmies.length > 0) { 
+        socket.emit('disbandArmies', selectedArmies); 
+        selectedArmies = []; 
+        updateArmyPanel(); 
+    } 
+});
 
 // ЛОГИКА КНОПКИ АВТО-АТАКИ
 document.getElementById('autoAttackBtn')?.addEventListener('click', () => {
@@ -156,17 +164,29 @@ function updateRegionPanel() {
     }
 }
 
+// ТЕПЕРЬ ПОДДЕРЖИВАЕТ МАССИВ ВЫДЕЛЕННЫХ АРМИЙ
 function updateArmyPanel() {
     const ap = document.getElementById('armyPanel'); if (!ap) return;
-    if (selectedArmies.length === 1 && armies[selectedArmies[0]] && armies[selectedArmies[0]].owner === myId) {
+    
+    // Проверяем, что ВСЕ выделенные армии принадлежат нам
+    const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
+    
+    if (mySelected.length > 0 && mySelected.length === selectedArmies.length) {
         ap.style.display = 'block';
-        document.getElementById('armyCount').innerText = Math.floor(armies[selectedArmies[0]].count);
-        // Сброс кнопки если панель обновилась
+        
+        let totalCount = 0;
+        mySelected.forEach(id => totalCount += armies[id].count);
+        
+        // Показываем суммарное количество войск
+        document.getElementById('armyCount').innerText = Math.floor(totalCount) + (mySelected.length > 1 ? ` (${mySelected.length} див.)` : ' ед.');
+        
         isSelectingAutoAttackTarget = false;
         document.getElementById('autoAttackBtn').style.background = '#f39c12';
         document.getElementById('autoAttackBtn').innerText = 'Авто-Атака';
         document.getElementById('autoAttackTip').style.display = 'none';
-    } else { ap.style.display = 'none'; }
+    } else { 
+        ap.style.display = 'none'; 
+    }
 }
 
 function pt(gx, gy) {
@@ -228,12 +248,14 @@ function drawMap() {
 
     ctx.beginPath(); ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; ctx.lineWidth = 1.5 / camera.zoom; ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
     for (let key in territory) {
-        const cell = territory[key]; const [cx, cy] = key.split('_').map(Number);
+        const cell = territory[key]; const [cx, cy] = splitAndNumber(key);
         const nRight = territory[`${cx+1}_${cy}`]; const nBottom = territory[`${cx}_${cy+1}`];
         if (nRight && nRight.owner === cell.owner && nRight.regionId !== cell.regionId) { let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
         if (nBottom && nBottom.owner === cell.owner && nBottom.regionId !== cell.regionId) { let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
     }
     ctx.stroke(); ctx.setLineDash([]); 
+
+    function splitAndNumber(str) { let i = str.indexOf('_'); return [Number(str.slice(0,i)), Number(str.slice(i+1))]; }
 
     for (const rId in regions) {
         const reg = regions[rId];
@@ -277,7 +299,6 @@ function drawMap() {
         const countText = Math.floor(army.count).toString();
         ctx.strokeText(countText, army.x, army.y + rh/2 + (12 / camera.zoom)); ctx.fillText(countText, army.x, army.y + rh/2 + (12 / camera.zoom));
 
-        // ЗНАЧОК АВТО-АТАКИ НАД АРМИЕЙ
         if (army.autoTarget) {
             ctx.fillStyle = '#f1c40f';
             ctx.font = `bold ${12 / camera.zoom}px Arial`;
@@ -291,7 +312,6 @@ function drawMap() {
         ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
     }
     
-    // ПРИЦЕЛ АВТО-АТАКИ (КУРСОР)
     if (isSelectingAutoAttackTarget) {
         ctx.strokeStyle = '#f39c12'; ctx.lineWidth = 2/camera.zoom;
         ctx.beginPath();
@@ -318,7 +338,7 @@ canvas.addEventListener('mousedown', (e) => {
     const world = getWorldCoords(e);
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
     
-    // ВЫБОР ЦЕЛИ ДЛЯ АВТО-АТАКИ
+    // ОТПРАВКА СРАЗУ МАССИВА АРМИЙ НА АВТО-АТАКУ
     if (isSelectingAutoAttackTarget && e.button === 0) {
         isSelectingAutoAttackTarget = false;
         document.getElementById('autoAttackBtn').style.background = '#f39c12';
@@ -337,8 +357,8 @@ canvas.addEventListener('mousedown', (e) => {
         }
 
         if (targetCountry && targetCountry !== myId && selectedArmies.length > 0) {
-            socket.emit('autoAttack', { armyId: selectedArmies[0], targetCountry: targetCountry });
-            showMsg("Приказ 'Авто-наступление' отдан!");
+            socket.emit('autoAttack', { armyIds: selectedArmies, targetCountry: targetCountry });
+            showMsg("Приказ 'Авто-наступление' отдан выбранным дивизиям!");
         } else {
             showMsg("Цель отменена или недопустима.");
         }
