@@ -116,8 +116,13 @@
             <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; padding: 2px 5px;">✏️</button>
         </div>
         <p style="font-size: 13px; color: #ccc;">Владелец: <span id="regOwner"></span></p>
-        <p style="font-size: 13px;">Клеток: <span id="regCells">0</span></p>
+        <p style="font-size: 13px;">Инфраструктура: <span id="regLevel">1</span>/10</p>
+        <p style="font-size: 13px;">Укрепления (ДОТы): <span id="regDef">0</span>/5</p>
         <hr style="border-color: #444;">
+        
+        <button id="upgradeRegBtn" class="btn-civil" style="background:#27ae60; padding:5px; font-size:12px; margin-bottom:5px;">Развить (5000$)</button>
+        <button id="defendRegBtn" class="btn-civil" style="background:#7f8c8d; padding:5px; font-size:12px; margin-bottom:10px;">Построить ДОТы (8000$)</button>
+        
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
         <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска</button>
         <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
