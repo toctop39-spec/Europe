@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Strategy - Vector</title>
+    <title>Global Strategy - Multiplayer</title>
     <style>
         body { background: #111; color: #ddd; font-family: 'Arial', sans-serif; margin: 0; overflow: hidden; user-select: none; }
         canvas { display: block; }
@@ -18,6 +18,7 @@
         .panel input, .panel select { padding: 10px; width: 90%; box-sizing: border-box; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 3px; }
         .panel button { padding: 12px; width: 100%; background: #2c3e50; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
         .panel button:hover { background: #34495e; }
+        .btn-military { background: #c0392b !important; } .btn-military:hover { background: #e74c3c !important; }
         
         #sideMenu { position: absolute; left: 15px; top: 60px; width: 280px; background: rgba(20,20,20,0.95); border: 1px solid #333; z-index: 10; display: none; }
         .tabs { display: flex; border-bottom: 1px solid #444; }
@@ -28,30 +29,30 @@
         
         .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
 
-        #cityPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; }
+        #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; }
     </style>
 </head>
 <body>
     <div id="setupScreen">
         <div id="roomPanel" class="panel">
-            <h2>Metaball Strategy</h2>
-            <button onclick="showCreateRoom()">Создать сервер</button>
-            <button onclick="showJoinRoom()">Присоединиться</button>
+            <h2>Глобальная Стратегия</h2>
+            <button onclick="showCreateRoom()">Создать сервер (Играть)</button>
+            <button onclick="showJoinRoom()">Присоединиться по коду</button>
             <button onclick="startEditor()" style="background:#8e44ad; margin-top:20px;">Редактор заготовок</button>
         </div>
 
         <div id="createRoomPanel" class="panel" style="display:none;">
             <h2>Создать сервер</h2>
-            <input type="text" id="presetNameInput" placeholder="Имя заготовки (пусто = новая)">
+            <input type="text" id="presetNameInput" placeholder="Имя заготовки (пусто = новая карта)">
             <button onclick="createRoom()">Создать</button>
-            <button onclick="backToRoomPanel()" style="background:#c0392b;">Назад</button>
+            <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
         </div>
 
         <div id="joinRoomPanel" class="panel" style="display:none;">
             <h2>Присоединиться</h2>
-            <input type="text" id="roomCodeInput" placeholder="Код (например, A7X9)" maxlength="5" style="text-transform: uppercase;">
+            <input type="text" id="roomCodeInput" placeholder="Код комнаты (например, A7X9)" maxlength="5" style="text-transform: uppercase;">
             <button onclick="joinRoom()">Войти</button>
-            <button onclick="backToRoomPanel()" style="background:#c0392b;">Назад</button>
+            <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
         </div>
 
         <div id="countryPanel" class="panel" style="display:none;">
@@ -60,7 +61,7 @@
             <select id="countrySelect"><option value="new">-- Новая (Пустошь) --</option></select>
             <div id="newCountryForm">
                 <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
-                <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px;">Флаг:</label>
+                <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px;">Флаг (картинка):</label>
                 <input type="file" id="countryFlagFile" accept="image/*">
                 <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px;">Цвет на карте:</label>
                 <input type="color" id="countryColor" value="#2b5e8a" style="height:40px; cursor:pointer;">
@@ -75,8 +76,8 @@
             <span id="myName" style="font-weight: bold; font-size: 16px;"></span>
         </div>
         <div style="display: flex; gap: 10px;">
-            <div class="stat-box"><span class="stat-icon">🔑</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
-            <div class="stat-box" title="Городов"><span class="stat-icon">🏙️</span> <span id="myCities">0</span></div>
+            <div class="stat-box" title="Код сервера для друзей"><span class="stat-icon">🔑</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
+            <div class="stat-box" title="Площадь"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
             <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
             <div class="stat-box" title="Рекруты"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
             <div class="stat-box" title="Экономика"><span class="stat-icon">💲</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>/с)</div>
@@ -90,34 +91,37 @@
         </div>
         
         <div id="tab-manage" class="tab-content active">
-            <button id="buildCityBtn" class="btn-civil" style="background:#f1c40f; color:#111;">⛺ Основать Город (1000 войск)</button>
-            <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">ЛКМ - выбор армии/города. ПКМ - движение войск.</p>
+            <button id="drawRegionBtn" class="btn-civil">Сформировать регион (Лассо)</button>
+            <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">ЛКМ - выбор, ПКМ - движение войск.</p>
         </div>
 
         <div id="tab-editor" class="tab-content">
-            <h4 style="margin-top:0;">Новая страна</h4>
-            <input type="text" id="edCountryName" placeholder="Название" style="width:100%; box-sizing:border-box; padding:5px; margin-bottom:5px; background:#222; color:#fff; border:1px solid #555;">
+            <h4 style="margin-top:0;">Создать новую страну</h4>
+            <input type="text" id="edCountryName" placeholder="Название страны" style="width:100%; box-sizing:border-box; padding:5px; margin-bottom:5px; background:#222; color:#fff; border:1px solid #555;">
+            <label style="display:block; font-size: 11px; margin-bottom: 2px;">Флаг:</label>
             <input type="file" id="edCountryFlagFile" accept="image/*" style="width:100%; box-sizing:border-box; margin-bottom:5px;">
+            <label style="display:block; font-size: 11px; margin-bottom: 2px;">Цвет:</label>
             <input type="color" id="edCountryColor" value="#e74c3c" style="width:100%; height:30px; margin-bottom:5px; cursor:pointer;">
             <button class="btn-civil" onclick="edCreateCountry()">Создать и переключиться</button>
             <hr style="border-color:#444;">
+            <h4 style="margin-bottom:5px;">Список стран (Клик для смены):</h4>
             <div id="edCountryList" style="max-height:150px; overflow-y:auto; margin-bottom:10px;"></div>
-            <button class="btn-civil" style="background:#f39c12; color:#111;" onclick="edSaveAndExit()">💾 Сохранить и выйти</button>
+            <hr style="border-color:#444;">
+            <button class="btn-civil" style="background:#f39c12; color:#111;" onclick="edSaveAndExit()">💾 Сохранить пресет и выйти</button>
         </div>
     </div>
 
-    <div id="cityPanel">
+    <div id="regionPanel">
         <div style="display: flex; align-items: center; justify-content: space-between;">
-            <h3 id="cityName" style="margin: 0 0 10px 0;">Город</h3>
-            <button id="renameCityBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; padding: 2px 5px;">✏️</button>
+            <h3 id="regName" style="margin: 0 0 10px 0;">Регион</h3>
+            <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; padding: 2px 5px;">✏️</button>
         </div>
-        <p style="font-size: 13px; color: #ccc;">Владелец: <span id="cityOwner"></span></p>
-        <p style="font-size: 13px;">Уровень: <span id="cityLevel">1</span>/10</p>
+        <p style="font-size: 13px; color: #ccc;">Владелец: <span id="regOwner"></span></p>
+        <p style="font-size: 13px;">Клеток: <span id="regCells">0</span></p>
         <hr style="border-color: #444;">
-        <button id="upgradeCityBtn" class="btn-civil" style="background:#27ae60; font-size: 12px;">Улучшить Город</button>
         <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
-        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Сформировать Армию</button>
-        <button id="closeCityBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
+        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска</button>
+        <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
