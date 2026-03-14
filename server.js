@@ -69,10 +69,8 @@ io.on('connection', (socket) => {
         let cId = data.isNew ? `c_${Math.random().toString(36).substr(2, 9)}` : data.countryId;
         if (data.isNew) {
             room.countries[cId] = { id: cId, name: data.name, flag: data.flag, color: data.color, socketId: socket.id, cells: 0, dollars: 10000, population: 100000, military: 10000, cap: 10000, isSpawned: false, online: true };
-            io.to(roomId).emit('newsEvent', `🌍 Новая нация "${data.name}" появилась на мировой арене!`);
-        } else if (room.countries[cId]) {
-            room.countries[cId].online = true; room.countries[cId].socketId = socket.id;
-        }
+            io.to(roomId).emit('newsEvent', `🌍 Новая нация "${data.name}" появилась на карте!`);
+        } else if (room.countries[cId]) { room.countries[cId].online = true; room.countries[cId].socketId = socket.id; }
         socket.emit('joinSuccess', cId); io.to(roomId).emit('initLobby', room.countries); io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
     });
 
@@ -142,6 +140,36 @@ io.on('connection', (socket) => {
         if (reg && reg.owner === cId && data.newName) { reg.name = data.newName.substring(0, 20); io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions }); }
     });
 
+    // ПРОКАЧКА ИНФРАСТРУКТУРЫ
+    socket.on('upgradeRegion', (regionId) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const reg = room.regions[regionId];
+        if (reg && reg.owner === cId && reg.level < 10) {
+            const cost = reg.level * 5000;
+            if (room.countries[cId].dollars >= cost) {
+                room.countries[cId].dollars -= cost; reg.level++;
+                io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions });
+                io.to(roomId).emit('updateResources', room.countries);
+            }
+        }
+    });
+
+    // ПОСТРОЙКА УКРЕПЛЕНИЙ (ДОТов)
+    socket.on('buildDefense', (regionId) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const reg = room.regions[regionId];
+        if (reg && reg.owner === cId && reg.defLevel < 5) {
+            const cost = ((reg.defLevel||0) + 1) * 8000;
+            if (room.countries[cId].dollars >= cost) {
+                room.countries[cId].dollars -= cost; reg.defLevel = (reg.defLevel||0) + 1;
+                io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions });
+                io.to(roomId).emit('updateResources', room.countries);
+            }
+        }
+    });
+
     socket.on('deployArmy', (data) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
@@ -153,15 +181,12 @@ io.on('connection', (socket) => {
         }
     });
 
-    // РОСПУСК АРМИИ
     socket.on('disbandArmy', (armyId) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
         if (room.armies[armyId] && room.armies[armyId].owner === cId) {
-            room.countries[cId].military += Math.floor(room.armies[armyId].count); // Возвращаем войска
-            delete room.armies[armyId]; // Удаляем армию
-            io.to(roomId).emit('syncArmies', room.armies);
-            io.to(roomId).emit('updateResources', room.countries);
+            room.countries[cId].military += Math.floor(room.armies[armyId].count); 
+            delete room.armies[armyId]; io.to(roomId).emit('syncArmies', room.armies); io.to(roomId).emit('updateResources', room.countries);
         }
     });
 
@@ -200,7 +225,6 @@ setInterval(() => {
                 const reg = room.regions[dep.regionId];
                 if (reg && reg.owner === dep.owner) {
                     const id = `a_${Math.random().toString(36).substr(2, 9)}`;
-                    // Базовая скорость маленькая, чем больше армия, тем она еще медленнее (эпичность)
                     const speed = Math.max(0.1, 0.4 - (dep.amount / 100000));
                     room.armies[id] = { id, owner: dep.owner, count: dep.amount, x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: speed };
                     stateChanged = true;
@@ -232,9 +256,19 @@ setInterval(() => {
                 if (d > a.speed) { a.x += ((a.targetX-a.x)/d)*a.speed; a.y += ((a.targetY-a.y)/d)*a.speed; stateChanged = true; } else { a.targetX = null; }
             }
             
-            // ТОЛЩИНА КИСТИ ЗАВИСИТ ОТ КОЛИЧЕСТВА ВОЙСК
+            // ВЛИЯНИЕ ДОТОВ (Защита регионов)
+            const cellKeyCenter = `${Math.floor(a.x/TILE_SIZE)}_${Math.floor(a.y/TILE_SIZE)}`;
+            const cellCenter = room.territory[cellKeyCenter];
+            if (cellCenter && cellCenter.owner !== a.owner) {
+                const reg = room.regions[cellCenter.regionId];
+                if (reg && reg.defLevel > 0) {
+                    a.dmg += (reg.defLevel * 5); // ДОТы наносят пассивный урон врагу
+                }
+            }
+            
+            // ЗАХВАТ ТЕРРИТОРИИ (Толщина кисти)
             const cellX = Math.floor(a.x/TILE_SIZE); const cellY = Math.floor(a.y/TILE_SIZE);
-            const brushR = Math.max(0, Math.min(4, Math.floor(Math.sqrt(a.count) / 40))); // От 1x1 до широкой полосы
+            const brushR = Math.max(0, Math.min(4, Math.floor(Math.sqrt(a.count) / 40))); 
             
             for(let dx = -brushR; dx <= brushR; dx++) {
                 for(let dy = -brushR; dy <= brushR; dy++) {
@@ -268,9 +302,7 @@ setInterval(() => {
         armyIds.forEach(id => {
             if (room.armies[id].dmg > 0) { room.armies[id].count -= room.armies[id].dmg; stateChanged = true; }
             if (room.armies[id].count <= 0) {
-                if (room.countries[room.armies[id].owner]) {
-                    io.to(roomId).emit('newsEvent', `💀 Дивизия ${room.countries[room.armies[id].owner].name} полностью уничтожена в бою!`);
-                }
+                if (room.countries[room.armies[id].owner]) io.to(roomId).emit('newsEvent', `💀 Дивизия ${room.countries[room.armies[id].owner].name} полностью уничтожена!`);
                 delete room.armies[id];
             }
         });
@@ -316,8 +348,7 @@ setInterval(() => {
                     continue;
                 }
 
-                let h = 0, t = 0, edge = false, owners = new Set(), comp = [];
-                let hasDefendingArmy = false;
+                let h = 0, t = 0, edge = false, owners = new Set(), comp = []; let hasDefendingArmy = false;
                 room.qX[t] = room.sX; room.qY[t] = room.sY; t++; room.vstd[idx] = 1;
                 
                 while(h < t) {
@@ -361,6 +392,7 @@ setInterval(() => {
             room.countries[id].cap = Math.floor(room.countries[id].population * 0.1);
             let main = 0; for (let a in room.armies) if (room.armies[a].owner === id) main += room.armies[a].count * 1; 
             let inc = 100 - main;
+            // Уровень региона дает бонус к доходу!
             for (let r in room.regions) if (room.regions[r].owner === id) inc += room.regions[r].cells * 1.5 * room.regions[r].level;
             room.countries[id].dollars += inc; room.countries[id].lastIncome = inc;
             if (room.countries[id].military < room.countries[id].cap) {
