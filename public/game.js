@@ -2,10 +2,13 @@ const socket = io();
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-const WORLD_WIDTH = 1920; const WORLD_HEIGHT = 1080;
-const TILE_SIZE = 5; const KM_PER_TILE = 25; 
+const WORLD_WIDTH = 1920; 
+const WORLD_HEIGHT = 1080;
+const TILE_SIZE = 5; 
+const KM_PER_TILE = 250; 
 
-canvas.width = WORLD_WIDTH; canvas.height = WORLD_HEIGHT;
+canvas.width = WORLD_WIDTH; 
+canvas.height = WORLD_HEIGHT;
 
 let territory = {}; let countries = {}; let armies = {}; let regions = {};
 let myId = null; let currentRoomId = null; let isPlaying = false; let isSpawned = false;
@@ -15,29 +18,39 @@ let visualArmies = {}; let camera = { x: 0, y: 0, zoom: 1 };
 let isPanning = false; let lastMouse = {x: 0, y: 0};
 let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
-
 let isSelectingAutoAttackTarget = false;
 
 const sysMsg = document.getElementById('systemMsg');
-function showMsg(text) { if(sysMsg) { sysMsg.innerText = text; setTimeout(() => sysMsg.innerText = "ЛКМ - выбор, ПКМ - марш армий.", 3000); } }
+function showMsg(text) { 
+    if(sysMsg) { 
+        sysMsg.innerText = text; 
+        setTimeout(() => sysMsg.innerText = "ЛКМ - выбор, ПКМ - марш армий.", 3000); 
+    } 
+}
 
 socket.on('newsEvent', (text) => {
     const box = document.getElementById('newsBox');
-    if(box) { box.innerText = text; box.style.opacity = 1; setTimeout(() => box.style.opacity = 0, 4000); }
+    if(box) { 
+        box.innerText = text; box.style.opacity = 1; 
+        setTimeout(() => box.style.opacity = 0, 4000); 
+    }
 });
 
-const bgMap = new Image(); bgMap.src = 'Map.png'; let loopStarted = false;
+const bgMap = new Image(); 
+bgMap.src = 'Map.png'; 
+let loopStarted = false;
 function startGame() { if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); } }
-bgMap.onload = startGame; bgMap.onerror = () => { startGame(); }; setTimeout(startGame, 1000); 
+bgMap.onload = startGame; 
+bgMap.onerror = () => { startGame(); }; 
+setTimeout(startGame, 1000); 
 
 const keys = { w: false, a: false, s: false, d: false };
 window.addEventListener('keydown', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = true; if (key === 'a' || key === 'ф') keys.a = true; if (key === 's' || key === 'ы') keys.s = true; if (key === 'd' || key === 'в') keys.d = true; });
 window.addEventListener('keyup', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = false; if (key === 'a' || key === 'ф') keys.a = false; if (key === 's' || key === 'ы') keys.s = false; if (key === 'd' || key === 'в') keys.d = false; });
 
-let base64Flag = null; let edBase64Flag = null; const flagCache = {}; 
-function getFlagImage(cId, base64Str) { if (!flagCache[cId]) { const img = new Image(); img.src = base64Str; flagCache[cId] = img; } return flagCache[cId]; }
+let base64Flag = null; let edBase64Flag = null; 
 
-// Конвертация загруженного флага
+// === УЛУЧШЕННАЯ ОБРАБОТКА ФЛАГОВ ИЗ ФАЙЛОВ ===
 function processFlag(file, isEd) { 
     if (file) { 
         const reader = new FileReader(); 
@@ -48,8 +61,10 @@ function processFlag(file, isEd) {
                 tempCanvas.width = 64; tempCanvas.height = 64; 
                 const tCtx = tempCanvas.getContext('2d'); 
                 tCtx.drawImage(img, 0, 0, 64, 64); 
-                if(isEd) edBase64Flag = tempCanvas.toDataURL('image/png'); 
-                else base64Flag = tempCanvas.toDataURL('image/png'); 
+                const processedBase64 = tempCanvas.toDataURL('image/png');
+                if(isEd) { edBase64Flag = processedBase64; }
+                else { base64Flag = processedBase64; }
+                console.log("Флаг успешно конвертирован и готов к отправке!");
             }; 
             img.src = ev.target.result; 
         }; 
@@ -62,20 +77,37 @@ document.getElementById('edCountryFlagFile')?.addEventListener('change', (e) => 
 window.createRoom = function() { socket.emit('createRoom', { presetName: document.getElementById('presetNameInput').value }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = res.roomId; document.getElementById('myRoomCode').innerText = res.roomId; } }); }
 window.joinRoom = function() { const code = document.getElementById('roomCodeInput').value.toUpperCase(); socket.emit('joinRoom', code, (res) => { if (res.success) { currentRoomId = code; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = code; document.getElementById('myRoomCode').innerText = code; } else { alert(res.msg || "Комната не найдена!"); } }); }
 
-socket.on('initLobby', (cList) => { countries = cList; if (isPlaying) return; const select = document.getElementById('countrySelect'); if(select) { select.innerHTML = '<option value="new">-- Новая (Пустошь) --</option>'; for (let cId in countries) { if (!countries[cId].online || !countries[cId].socketId) select.innerHTML += `<option value="${cId}">${countries[cId].name} (Свободна)</option>`; } } });
+socket.on('initLobby', (cList) => { 
+    countries = cList; 
+    if (isPlaying) return; 
+    const select = document.getElementById('countrySelect'); 
+    if(select) { 
+        select.innerHTML = '<option value="new">-- Новая (Пустошь) --</option>'; 
+        for (let cId in countries) { 
+            if (!countries[cId].online || !countries[cId].socketId) 
+                select.innerHTML += `<option value="${cId}">${countries[cId].name} (Свободна)</option>`; 
+        } 
+    } 
+});
 
 document.getElementById('joinBtn')?.addEventListener('click', () => {
     const selectVal = document.getElementById('countrySelect').value;
     if (selectVal === 'new') {
-        const name = document.getElementById('countryName').value || 'Империя'; const color = document.getElementById('countryColor').value;
+        const name = document.getElementById('countryName').value || 'Империя'; 
+        const color = document.getElementById('countryColor').value;
         let finalFlag = base64Flag; 
-        if (!finalFlag) { 
+        
+        // Надежный фоллбэк при создании страны
+        if (!finalFlag || !finalFlag.startsWith('data:image')) { 
+            console.warn("Флаг не был выбран или не успел загрузиться. Генерируем цветовой флаг.");
             const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; 
             const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
-            finalFlag = tCnv.toDataURL(); 
+            finalFlag = tCnv.toDataURL('image/png'); 
         }
         socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag });
-    } else { socket.emit('joinGame', { isNew: false, countryId: selectVal }); }
+    } else { 
+        socket.emit('joinGame', { isNew: false, countryId: selectVal }); 
+    }
 });
 
 socket.on('joinSuccess', (cId) => { 
@@ -85,7 +117,7 @@ socket.on('joinSuccess', (cId) => {
     document.getElementById('sideMenu').style.display = 'block'; 
     isPlaying = true; 
     updateEditorList(); 
-    if (countries[myId]) updateUI(); // Сразу же обновляем UI при коннекте
+    if (countries[myId]) updateUI(); 
 });
 
 window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '' }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; } }); }
@@ -105,8 +137,7 @@ document.getElementById('defendRegBtn')?.addEventListener('click', () => { if(cl
 document.getElementById('disbandBtn')?.addEventListener('click', () => { 
     if (selectedArmies.length > 0) { 
         socket.emit('disbandArmies', selectedArmies); 
-        selectedArmies = []; 
-        updateArmyPanel(); 
+        selectedArmies = []; updateArmyPanel(); 
     } 
 });
 
@@ -136,68 +167,50 @@ socket.on('syncArmies', (a) => {
     updateArmyPanel();
 });
 
-function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
-
-function gameLoop() {
-    const camSpeed = 15 / camera.zoom;
-    if (keys.w) camera.y += camSpeed; if (keys.s) camera.y -= camSpeed; if (keys.a) camera.x += camSpeed; if (keys.d) camera.x -= camSpeed;
-    if (camera.x > 0) camera.x = 0; if (camera.y > 0) camera.y = 0;
-    const minX = canvas.width - WORLD_WIDTH * camera.zoom; const minY = canvas.height - WORLD_HEIGHT * camera.zoom;
-    if (camera.x < minX) camera.x = minX; if (camera.y < minY) camera.y = minY;
-
-    for(let id in visualArmies) {
-        if(armies[id]) { 
-            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4; 
-            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4; 
-            visualArmies[id].count = armies[id].count; visualArmies[id].owner = armies[id].owner; 
-        } else { delete visualArmies[id]; }
-    }
-    drawMap(); requestAnimationFrame(gameLoop);
-}
-
+// === БРОНЕБОЙНОЕ ОБНОВЛЕНИЕ ИНТЕРФЕЙСА (ФИКС КРЕСТИКОВ) ===
 function updateUI() {
     if (myId && countries[myId]) {
+        const country = countries[myId];
         const nameEl = document.getElementById('myName');
         const flagEl = document.getElementById('myFlagUI');
         
-        if (nameEl && nameEl.innerText !== countries[myId].name) {
-            nameEl.innerText = countries[myId].name;
+        if (nameEl && nameEl.innerText !== country.name) {
+            nameEl.innerText = country.name;
         }
         
-        // --- 100% НАДЕЖНЫЙ КОД ДЛЯ ФЛАГА ---
-        let flagSrc = countries[myId].flag;
-        
-        // Если флага нет, или он слишком короткий (битая строка base64)
-        if (!flagSrc || flagSrc.length < 100) { 
-            const tCnv = document.createElement('canvas'); 
-            tCnv.width = 64; tCnv.height = 64; 
-            const tCtx = tCnv.getContext('2d'); 
-            // Берем цвет страны, или серый по умолчанию
-            tCtx.fillStyle = countries[myId].color || '#888'; 
-            tCtx.fillRect(0, 0, 64, 64); 
-            flagSrc = tCnv.toDataURL('image/png');
-            // Сохраняем сгенерированный флаг, чтобы не рисовать его каждый раз
-            countries[myId].flag = flagSrc; 
+        if (flagEl) {
+            let safeFlag = country.flag;
+            
+            // Если флага нет, он пустой, или это не картинка
+            if (!safeFlag || typeof safeFlag !== 'string' || !safeFlag.startsWith('data:image')) {
+                const tCnv = document.createElement('canvas'); 
+                tCnv.width = 64; tCnv.height = 64; 
+                const tCtx = tCnv.getContext('2d'); 
+                tCtx.fillStyle = country.color || '#555'; 
+                tCtx.fillRect(0, 0, 64, 64); 
+                safeFlag = tCnv.toDataURL('image/png');
+                countries[myId].flag = safeFlag; // Перезаписываем битый флаг в памяти
+            }
+            
+            // Жестко перезаписываем атрибут, только если он реально изменился
+            if (flagEl.getAttribute('src') !== safeFlag) {
+                flagEl.setAttribute('src', safeFlag);
+            }
         }
         
-        // Безопасное обновление атрибута картинки
-        if (flagEl && flagEl.getAttribute('src') !== flagSrc) {
-            flagEl.setAttribute('src', flagSrc);
-        }
-        // -----------------------------------
-
-        isSpawned = countries[myId].isSpawned;
+        isSpawned = country.isSpawned;
         
-        document.getElementById('myArea').innerText = (countries[myId].cells * KM_PER_TILE).toLocaleString();
-        document.getElementById('myPop').innerText = Math.floor(countries[myId].population).toLocaleString();
-        document.getElementById('myDollars').innerText = Math.floor(countries[myId].dollars).toLocaleString();
+        document.getElementById('myArea').innerText = (country.cells * KM_PER_TILE).toLocaleString();
+        document.getElementById('myPop').innerText = Math.floor(country.population).toLocaleString();
+        document.getElementById('myDollars').innerText = Math.floor(country.dollars).toLocaleString();
+        
         const incEl = document.getElementById('myIncome'); 
         if (incEl) { 
-            incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome); 
-            incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; 
+            incEl.innerText = (country.lastIncome >= 0 ? "+" : "") + Math.floor(country.lastIncome); 
+            incEl.style.color = country.lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; 
         }
-        document.getElementById('myMilitary').innerText = Math.floor(countries[myId].military).toLocaleString();
-        document.getElementById('myCap').innerText = countries[myId].cap.toLocaleString();
+        document.getElementById('myMilitary').innerText = Math.floor(country.military).toLocaleString();
+        document.getElementById('myCap').innerText = country.cap.toLocaleString();
     }
 }
 
@@ -228,7 +241,6 @@ function updateRegionPanel() {
 
 function updateArmyPanel() {
     const ap = document.getElementById('armyPanel'); if (!ap) return;
-    
     const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
     
     if (mySelected.length > 0 && mySelected.length === selectedArmies.length) {
@@ -247,12 +259,31 @@ function updateArmyPanel() {
     }
 }
 
+function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
+
 function pt(gx, gy) {
     let sin1 = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
     let sin2 = Math.sin(gx * 39.346 + gy * 11.135) * 43758.5453;
     let randX = sin1 - Math.floor(sin1); let randY = sin2 - Math.floor(sin2);
     let wobble = TILE_SIZE * 0.7; 
     return { x: (gx * TILE_SIZE) + (randX - 0.5) * wobble, y: (gy * TILE_SIZE) + (randY - 0.5) * wobble };
+}
+
+function gameLoop() {
+    const camSpeed = 15 / camera.zoom;
+    if (keys.w) camera.y += camSpeed; if (keys.s) camera.y -= camSpeed; if (keys.a) camera.x += camSpeed; if (keys.d) camera.x -= camSpeed;
+    if (camera.x > 0) camera.x = 0; if (camera.y > 0) camera.y = 0;
+    const minX = canvas.width - WORLD_WIDTH * camera.zoom; const minY = canvas.height - WORLD_HEIGHT * camera.zoom;
+    if (camera.x < minX) camera.x = minX; if (camera.y < minY) camera.y = minY;
+
+    for(let id in visualArmies) {
+        if(armies[id]) { 
+            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4; 
+            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4; 
+            visualArmies[id].count = armies[id].count; visualArmies[id].owner = armies[id].owner; 
+        } else { delete visualArmies[id]; }
+    }
+    drawMap(); requestAnimationFrame(gameLoop);
 }
 
 function drawMap() {
@@ -306,14 +337,12 @@ function drawMap() {
 
     ctx.beginPath(); ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; ctx.lineWidth = 1.5 / camera.zoom; ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
     for (let key in territory) {
-        const cell = territory[key]; const [cx, cy] = splitAndNumber(key);
+        const cell = territory[key]; const [cx, cy] = key.split('_').map(Number);
         const nRight = territory[`${cx+1}_${cy}`]; const nBottom = territory[`${cx}_${cy+1}`];
         if (nRight && nRight.owner === cell.owner && nRight.regionId !== cell.regionId) { let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
         if (nBottom && nBottom.owner === cell.owner && nBottom.regionId !== cell.regionId) { let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
     }
     ctx.stroke(); ctx.setLineDash([]); 
-
-    function splitAndNumber(str) { let i = str.indexOf('_'); return [Number(str.slice(0,i)), Number(str.slice(i+1))]; }
 
     for (const rId in regions) {
         const reg = regions[rId];
