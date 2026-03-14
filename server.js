@@ -15,8 +15,9 @@ const WORLD_WIDTH = 1920;
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
 
-const ENGAGE_RADIUS = 25; 
-const COLLISION_RADIUS = 3; 
+// Радиус сражения уменьшен в 2.5 раза (с 25 до 10)
+const ENGAGE_RADIUS = 10; 
+const COLLISION_RADIUS = 5; 
 
 function createRoom(roomId, presetData = null) {
     let room = {
@@ -171,7 +172,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ПОДДЕРЖКА РОСПУСКА МАССИВА АРМИЙ
     socket.on('disbandArmies', (armyIds) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
@@ -202,7 +202,6 @@ io.on('connection', (socket) => {
         });
     });
 
-    // ПОДДЕРЖКА АВТО-АТАКИ ДЛЯ МАССИВА АРМИЙ
     socket.on('autoAttack', (data) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
@@ -276,7 +275,8 @@ setInterval(() => {
                 const reg = room.regions[dep.regionId];
                 if (reg && reg.owner === dep.owner) {
                     const id = `a_${Math.random().toString(36).substr(2, 9)}`;
-                    const speed = Math.max(0.05, 0.2 - (dep.amount / 100000));
+                    // СКОРОСТЬ СНИЖЕНА В 2 РАЗА
+                    const speed = Math.max(0.025, 0.1 - (dep.amount / 200000));
                     room.armies[id] = { id, owner: dep.owner, count: dep.amount, x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: speed, autoTarget: null };
                     stateChanged = true;
                 } else { if (room.countries[dep.owner]) room.countries[dep.owner].military += dep.amount; }
@@ -292,10 +292,14 @@ setInterval(() => {
             for (let j = i + 1; j < armyIds.length; j++) {
                 const b = room.armies[armyIds[j]]; const d = Math.hypot(a.x - b.x, a.y - b.y);
                 if (d < COLLISION_RADIUS * 2) {
-                    if (a.owner !== b.owner) { a.targets.push(b.id); b.targets.push(a.id); a.targetX = null; b.targetX = null; } 
+                    if (a.owner !== b.owner) { 
+                        // БОЛЬШЕ НЕ СТИРАЕМ TARGET_X! Войска не забудут приказ!
+                        a.targets.push(b.id); b.targets.push(a.id); 
+                    } 
                     else { const p = (COLLISION_RADIUS * 2 - d) * 0.5; const ang = Math.atan2(a.y-b.y, a.x-b.x); a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p; stateChanged = true; }
                 } else if (d < ENGAGE_RADIUS && a.owner !== b.owner) {
-                    a.targets.push(b.id); b.targets.push(a.id); a.targetX = null; b.targetX = null; 
+                    // БОЛЬШЕ НЕ СТИРАЕМ TARGET_X!
+                    a.targets.push(b.id); b.targets.push(a.id); 
                 }
             }
         }
@@ -309,6 +313,8 @@ setInterval(() => {
 
         armyIds.forEach(id => {
             const a = room.armies[id];
+            
+            // Если нет целей поблизости (или они только что умерли) — идем дальше к цели!
             if (!a.targets.length && a.targetX !== null) {
                 const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
                 if (d > a.speed) { a.x += ((a.targetX-a.x)/d)*a.speed; a.y += ((a.targetY-a.y)/d)*a.speed; stateChanged = true; } else { a.targetX = null; }
@@ -364,9 +370,13 @@ setInterval(() => {
             }
         });
 
+        // СКОРОСТЬ УРОНА СНИЖЕНА В 2 РАЗА (с 0.015 до 0.0075)
         armyIds.forEach(id => {
             const a = room.armies[id];
-            if (a.targets.length) { const t = room.armies[a.targets[0]]; if (t) t.dmg += (a.count * 0.015) * (1 + (t.targets.length - 1) * 0.5); }
+            if (a.targets.length) { 
+                const t = room.armies[a.targets[0]]; 
+                if (t) t.dmg += (a.count * 0.0075) * (1 + (t.targets.length - 1) * 0.5); 
+            }
         });
 
         armyIds.forEach(id => {
