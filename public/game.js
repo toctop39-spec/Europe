@@ -215,6 +215,7 @@ function updateUI() {
     }
 }
 
+// НАЙДИ функцию updateRegionPanel и ЗАМЕНИ её на эту:
 function updateRegionPanel() {
     const rp = document.getElementById('regionPanel'); if (!rp) return;
     if (!clickedRegionId || !regions[clickedRegionId]) { rp.style.display = 'none'; return; }
@@ -222,17 +223,30 @@ function updateRegionPanel() {
     
     document.getElementById('regName').innerText = reg.name;
     document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
-    document.getElementById('regLevel').innerText = reg.level;
     
-    const upBtn = document.getElementById('upgradeRegBtn');
+    // Обновляем текст уровней
+    document.getElementById('regLevel').innerText = reg.level;
+    document.getElementById('regRoadLevel').innerText = reg.roadLevel || 0;
+    
+    const upInfraBtn = document.getElementById('upgradeRegBtn');
+    const upRoadBtn = document.getElementById('upgradeRoadBtn');
     const renBtn = document.getElementById('renameRegBtn');
     const deployBtn = document.getElementById('deployBtn');
     
     if (reg.owner === myId) { 
         if(renBtn) renBtn.style.display = 'inline-block'; 
-        if(upBtn) { upBtn.style.display = 'block'; upBtn.innerText = reg.level >= 10 ? "Макс. Инфраструктура" : `Строить дороги (5000 ⚙️)`; }
         
-        // ПРОВЕРКА ОККУПАЦИИ ДЛЯ КНОПКИ СПАВНА
+        if(upInfraBtn) { 
+            upInfraBtn.style.display = 'block'; 
+            upInfraBtn.innerText = reg.level >= 10 ? "Макс. Экономика" : `Развить экономику (${reg.level * 5000} 💵)`; 
+        }
+        
+        if(upRoadBtn) {
+            upRoadBtn.style.display = 'block';
+            let rLvl = reg.roadLevel || 0;
+            upRoadBtn.innerText = rLvl >= 10 ? "Макс. Логистика" : `Улучшить дороги (${(rLvl + 1) * 3000} 💵)`;
+        }
+        
         let cityCell = territory[`${reg.cityX}_${reg.cityY}`];
         let isOccupied = cityCell && cityCell.core !== myId && countries[cityCell.core] && countries[cityCell.core].cells > 0;
         
@@ -245,7 +259,8 @@ function updateRegionPanel() {
         }
     } else { 
         if(renBtn) renBtn.style.display = 'none'; 
-        if(upBtn) upBtn.style.display = 'none';
+        if(upInfraBtn) upInfraBtn.style.display = 'none';
+        if(upRoadBtn) upRoadBtn.style.display = 'none';
         deployBtn.disabled = true;
     }
 }
