@@ -155,7 +155,6 @@ function gameLoop() {
     drawMap(); requestAnimationFrame(gameLoop);
 }
 
-// === НАДЕЖНОЕ ОБНОВЛЕНИЕ ИНТЕРФЕЙСА (ФИКС ФЛАГОВ) ===
 function updateUI() {
     if (myId && countries[myId]) {
         const nameEl = document.getElementById('myName');
@@ -165,17 +164,38 @@ function updateUI() {
             nameEl.innerText = countries[myId].name;
         }
         
-        // Надежная установка картинки флага
-        if (flagEl && flagEl.getAttribute('src') !== countries[myId].flag) {
-            flagEl.setAttribute('src', countries[myId].flag);
+        // --- 100% НАДЕЖНЫЙ КОД ДЛЯ ФЛАГА ---
+        let flagSrc = countries[myId].flag;
+        
+        // Если флага нет, или он слишком короткий (битая строка base64)
+        if (!flagSrc || flagSrc.length < 100) { 
+            const tCnv = document.createElement('canvas'); 
+            tCnv.width = 64; tCnv.height = 64; 
+            const tCtx = tCnv.getContext('2d'); 
+            // Берем цвет страны, или серый по умолчанию
+            tCtx.fillStyle = countries[myId].color || '#888'; 
+            tCtx.fillRect(0, 0, 64, 64); 
+            flagSrc = tCnv.toDataURL('image/png');
+            // Сохраняем сгенерированный флаг, чтобы не рисовать его каждый раз
+            countries[myId].flag = flagSrc; 
         }
         
+        // Безопасное обновление атрибута картинки
+        if (flagEl && flagEl.getAttribute('src') !== flagSrc) {
+            flagEl.setAttribute('src', flagSrc);
+        }
+        // -----------------------------------
+
         isSpawned = countries[myId].isSpawned;
         
         document.getElementById('myArea').innerText = (countries[myId].cells * KM_PER_TILE).toLocaleString();
         document.getElementById('myPop').innerText = Math.floor(countries[myId].population).toLocaleString();
         document.getElementById('myDollars').innerText = Math.floor(countries[myId].dollars).toLocaleString();
-        const incEl = document.getElementById('myIncome'); if (incEl) { incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome); incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; }
+        const incEl = document.getElementById('myIncome'); 
+        if (incEl) { 
+            incEl.innerText = (countries[myId].lastIncome >= 0 ? "+" : "") + Math.floor(countries[myId].lastIncome); 
+            incEl.style.color = countries[myId].lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; 
+        }
         document.getElementById('myMilitary').innerText = Math.floor(countries[myId].military).toLocaleString();
         document.getElementById('myCap').innerText = countries[myId].cap.toLocaleString();
     }
