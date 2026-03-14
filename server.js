@@ -16,7 +16,7 @@ const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
 
 const ENGAGE_RADIUS = 25; 
-const COLLISION_RADIUS = 6; 
+const COLLISION_RADIUS = 3; 
 
 function createRoom(roomId, presetData = null) {
     let room = {
