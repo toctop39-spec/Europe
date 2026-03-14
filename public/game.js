@@ -62,7 +62,6 @@ socket.on('presetSaved', () => { alert("Заготовка сохранена!")
 
 function updateEditorList() { if (!isEditorMode) return; const list = document.getElementById('edCountryList'); if(!list) return; list.innerHTML = ''; for (let cId in countries) { let isActive = (cId === myId) ? "border: 2px solid #fff;" : "border: 1px solid #333;"; list.innerHTML += `<button onclick="edSwitchCountry('${cId}')" style="background:${countries[cId].color}; width:100%; margin-bottom:5px; padding:8px; color:#fff; font-weight:bold; cursor:pointer; ${isActive}">${countries[cId].name}</button>`; } }
 
-// === УПРАВЛЕНИЕ ===
 document.getElementById('drawRegionBtn')?.addEventListener('click', () => { isDrawingRegion = !isDrawingRegion; document.getElementById('drawRegionBtn').innerText = isDrawingRegion ? "Отменить" : "Сформировать регион (Лассо)"; if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } else { lassoPoints = []; } });
 document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); });
 document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
@@ -70,7 +69,6 @@ document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (c
 
 document.getElementById('upgradeRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
 document.getElementById('defendRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('buildDefense', clickedRegionId); });
-
 document.getElementById('disbandBtn')?.addEventListener('click', () => { if (selectedArmies.length > 0) { socket.emit('disbandArmy', selectedArmies[0]); selectedArmies = []; updateArmyPanel(); } });
 
 socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; });
@@ -150,6 +148,23 @@ function updateArmyPanel() {
     } else { ap.style.display = 'none'; }
 }
 
+// --- ФУНКЦИЯ ДЕФОРМАЦИИ СЕТКИ (Делает волнистую границу) ---
+function pt(gx, gy) {
+    // Детерминированный псевдо-рандом для каждой вершины сетки
+    let sin1 = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
+    let sin2 = Math.sin(gx * 39.346 + gy * 11.135) * 43758.5453;
+    let randX = sin1 - Math.floor(sin1);
+    let randY = sin2 - Math.floor(sin2);
+    
+    // Амплитуда "дрожания" линии
+    let wobble = TILE_SIZE * 0.7; 
+    
+    return {
+        x: (gx * TILE_SIZE) + (randX - 0.5) * wobble,
+        y: (gy * TILE_SIZE) + (randY - 0.5) * wobble
+    };
+}
+
 function drawMap() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!bgMap.complete || bgMap.naturalWidth === 0) { ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
@@ -157,87 +172,108 @@ function drawMap() {
     ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
     if (bgMap.complete && bgMap.naturalWidth > 0) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // 1. ЗАЛИВКА ТЕРРИТОРИИ (Сплошная, прозрачная)
-    ctx.globalAlpha = 0.4; 
+    // 1. ВНУТРЕННЯЯ ЗАЛИВКА ТЕРРИТОРИИ (Сплошная, чтобы не было дыр)
+    ctx.globalAlpha = 0.35; 
     for (const key in territory) {
         const owner = countries[territory[key].owner];
         if (owner) { 
             const [ix, iy] = key.split('_').map(Number); 
             ctx.fillStyle = owner.color; 
-            ctx.fillRect(ix * TILE_SIZE, iy * TILE_SIZE, TILE_SIZE + 0.5, TILE_SIZE + 0.5); 
+            ctx.fillRect(ix * TILE_SIZE - 1, iy * TILE_SIZE - 1, TILE_SIZE + 2, TILE_SIZE + 2); 
         }
     }
+    ctx.globalAlpha = 1.0;
 
-    // 2. ГЛАДКИЕ ВНЕШНИЕ ГРАНИЦЫ (Стиль Hearts of Iron)
-    // Алгоритм находит края территории и соединяет их круглыми линиями. Углы "квадратов" исчезают!
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    let cellsByOwner = {};
+    // Сгруппируем клетки по владельцам для отрисовки линий фронта
+    let bordersByOwner = {};
     for (const key in territory) {
-        const owner = territory[key].owner;
-        if (!cellsByOwner[owner]) cellsByOwner[owner] = [];
-        cellsByOwner[owner].push(key);
+        const ownerId = territory[key].owner;
+        if (!bordersByOwner[ownerId]) bordersByOwner[ownerId] = [];
+        bordersByOwner[ownerId].push(key);
     }
 
-    for (let cId in cellsByOwner) {
+    // Настройки для сглаживания "рубленных" углов
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // 2. ОТРИСОВКА ВОЛНИСТОЙ ЛИНИИ ФРОНТА
+    for (let cId in bordersByOwner) {
         const country = countries[cId]; if (!country) continue;
         
         ctx.beginPath();
-        cellsByOwner[cId].forEach(key => {
+        bordersByOwner[cId].forEach(key => {
             const [cx, cy] = key.split('_').map(Number);
-            const px = cx * TILE_SIZE; const py = cy * TILE_SIZE;
             
-            // Проверяем соседей. Если соседа нет или он чужой - это граница!
+            // Проверяем соседей
             const nTop = territory[`${cx}_${cy-1}`]?.owner === cId;
             const nBottom = territory[`${cx}_${cy+1}`]?.owner === cId;
             const nLeft = territory[`${cx-1}_${cy}`]?.owner === cId;
             const nRight = territory[`${cx+1}_${cy}`]?.owner === cId;
 
-            if (!nTop) { ctx.moveTo(px, py); ctx.lineTo(px + TILE_SIZE, py); }
-            if (!nBottom) { ctx.moveTo(px, py + TILE_SIZE); ctx.lineTo(px + TILE_SIZE, py + TILE_SIZE); }
-            if (!nLeft) { ctx.moveTo(px, py); ctx.lineTo(px, py + TILE_SIZE); }
-            if (!nRight) { ctx.moveTo(px + TILE_SIZE, py); ctx.lineTo(px + TILE_SIZE, py + TILE_SIZE); }
+            // Если сосед чужой - проводим "искривленную" границу
+            if (!nTop) {
+                let p1 = pt(cx, cy); let p2 = pt(cx+1, cy);
+                ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+            }
+            if (!nBottom) {
+                let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1);
+                ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+            }
+            if (!nLeft) {
+                let p1 = pt(cx, cy); let p2 = pt(cx, cy+1);
+                ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+            }
+            if (!nRight) {
+                let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1);
+                ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+            }
         });
 
-        // Рисуем внешнее свечение
+        // МНОГОСЛОЙНЫЙ РЕНДЕР ЛИНИИ ФРОНТА (Как на военных картах)
+        
+        // Слой 1: Широкая полупрозрачная полоса цвета страны (Зона влияния)
         ctx.strokeStyle = country.color;
-        ctx.lineWidth = TILE_SIZE * 1.5; // Толстая линия скругляет края
-        ctx.globalAlpha = 0.4;
+        ctx.lineWidth = TILE_SIZE * 2.2;
+        ctx.globalAlpha = 0.3;
         ctx.stroke();
 
-        // Рисуем тонкую яркую центральную линию фронта
-        ctx.lineWidth = TILE_SIZE * 0.6;
+        // Слой 2: Твердая основная линия (Сплошной цвет)
+        ctx.strokeStyle = country.color;
+        ctx.lineWidth = TILE_SIZE * 0.8;
         ctx.globalAlpha = 1.0;
+        ctx.stroke();
+
+        // Слой 3: Тонкая темная обводка поверх, чтобы подчеркнуть границу
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+        ctx.lineWidth = TILE_SIZE * 0.25;
         ctx.stroke();
     }
 
-    // 3. ОТРИСОВКА ВНУТРЕННИХ ГРАНИЦ РЕГИОНОВ (Пунктирные линии, как на реальных картах)
+    // 3. ОТРИСОВКА ВНУТРЕННИХ ГРАНИЦ РЕГИОНОВ (Пунктиром)
     ctx.beginPath();
-    ctx.strokeStyle = '#ffffff';
-    ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
     ctx.lineWidth = 1.5 / camera.zoom;
     ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
 
     for (let key in territory) {
         const cell = territory[key];
         const [cx, cy] = key.split('_').map(Number);
-        const px = cx * TILE_SIZE; const py = cy * TILE_SIZE;
         
         const nRight = territory[`${cx+1}_${cy}`];
         const nBottom = territory[`${cx}_${cy+1}`];
         
-        // Рисуем линию, если сосед - это НАША страна, но ДРУГОЙ регион
+        // Искривленные границы между регионами одной страны
         if (nRight && nRight.owner === cell.owner && nRight.regionId !== cell.regionId) {
-            ctx.moveTo(px + TILE_SIZE, py); ctx.lineTo(px + TILE_SIZE, py + TILE_SIZE);
+            let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1);
+            ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
         }
         if (nBottom && nBottom.owner === cell.owner && nBottom.regionId !== cell.regionId) {
-            ctx.moveTo(px, py + TILE_SIZE); ctx.lineTo(px + TILE_SIZE, py + TILE_SIZE);
+            let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1);
+            ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
         }
     }
     ctx.stroke();
     ctx.setLineDash([]); // Возвращаем обычные линии
-    ctx.globalAlpha = 1.0;
 
     // 4. МАРКЕРЫ РЕГИОНОВ (Столицы регионов)
     for (const rId in regions) {
@@ -245,7 +281,6 @@ function drawMap() {
         if (reg.cityX !== undefined) {
             const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
             
-            // Значок региона меняется, если построены ДОТы
             if ((reg.defLevel||0) > 0) {
                 ctx.fillStyle = '#7f8c8d'; ctx.beginPath(); ctx.arc(tx, ty, 6, 0, Math.PI*2); ctx.fill();
                 ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5/camera.zoom; ctx.stroke();
