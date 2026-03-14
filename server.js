@@ -15,9 +15,9 @@ const WORLD_WIDTH = 1920;
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
 
-// Радиус сражения уменьшен в 2.5 раза (с 25 до 10)
+// Радиус сражения 10 (уменьшен в 2.5 раза), радиус коллизии 2 (чтобы войска могли плотно окружать врага!)
 const ENGAGE_RADIUS = 10; 
-const COLLISION_RADIUS = 5; 
+const COLLISION_RADIUS = 2; 
 
 function createRoom(roomId, presetData = null) {
     let room = {
@@ -228,35 +228,84 @@ setInterval(() => {
     }
 }, 200);
 
-// --- ИИ ГЕНЕРАЛОВ (Авто-атака каждую секунду) ---
+// --- ОБНОВЛЕННЫЙ ИИ (ПРИОРИТЕТЫ: АРМИИ -> ГОРОДА -> КЛЕТКИ) ---
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
+        
+        // Быстрый сбор данных о врагах (чтобы не перебирать 80к клеток для каждой армии)
+        let enemyData = {};
+        let activeTargets = new Set();
+        for (let aId in room.armies) {
+            if (room.armies[aId].autoTarget) activeTargets.add(room.armies[aId].autoTarget);
+        }
+        
+        if (activeTargets.size > 0) {
+            for (let t of activeTargets) enemyData[t] = { armies: [], cities: [], tiles: [] };
+            
+            for (let eId in room.armies) {
+                let e = room.armies[eId];
+                if (enemyData[e.owner]) enemyData[e.owner].armies.push({x: e.x, y: e.y});
+            }
+            
+            for (let rId in room.regions) {
+                let r = room.regions[rId];
+                if (enemyData[r.owner] && r.cityX !== undefined) {
+                    enemyData[r.owner].cities.push({x: r.cityX * TILE_SIZE, y: r.cityY * TILE_SIZE});
+                }
+            }
+            
+            for (let key in room.territory) {
+                let owner = room.territory[key].owner;
+                if (enemyData[owner]) {
+                    let splitIdx = key.indexOf('_');
+                    enemyData[owner].tiles.push({
+                        x: Number(key.slice(0, splitIdx)) * TILE_SIZE, 
+                        y: Number(key.slice(splitIdx + 1)) * TILE_SIZE
+                    });
+                }
+            }
+        }
+
         for (let aId in room.armies) {
             let a = room.armies[aId];
             if (a.autoTarget) {
-                let bestDist = Infinity; let bestTarget = null;
-                for (let rId in room.regions) {
-                    let r = room.regions[rId];
-                    if (r.owner === a.autoTarget && r.cityX !== undefined) {
-                        let dist = Math.hypot(a.x - r.cityX*TILE_SIZE, a.y - r.cityY*TILE_SIZE);
-                        if (dist < bestDist) { bestDist = dist; bestTarget = {x: r.cityX*TILE_SIZE, y: r.cityY*TILE_SIZE}; }
-                    }
+                let data = enemyData[a.autoTarget];
+                if (!data || (data.armies.length === 0 && data.cities.length === 0 && data.tiles.length === 0)) {
+                    a.autoTarget = null; // Враг полностью уничтожен
+                    continue;
                 }
-                if (!bestTarget) {
-                    for (let eId in room.armies) {
-                        let e = room.armies[eId];
-                        if (e.owner === a.autoTarget) {
-                            let dist = Math.hypot(a.x - e.x, a.y - e.y);
-                            if (dist < bestDist) { bestDist = dist; bestTarget = {x: e.x, y: e.y}; }
-                        }
+
+                let bestTarget = null;
+                let bestDist = Infinity;
+
+                if (data.armies.length > 0) {
+                    // ПРИОРИТЕТ 1: УНИЧТОЖЕНИЕ АРМИЙ
+                    for (let pt of data.armies) {
+                        let d = Math.hypot(a.x - pt.x, a.y - pt.y);
+                        if (d < bestDist) { bestDist = d; bestTarget = pt; }
                     }
-                }
-                
-                if (bestTarget) {
-                    a.targetX = bestTarget.x; a.targetY = bestTarget.y;
+                } else if (data.cities.length > 0) {
+                    // ПРИОРИТЕТ 2: ЗАХВАТ ГОРОДОВ
+                    for (let pt of data.cities) {
+                        let d = Math.hypot(a.x - pt.x, a.y - pt.y);
+                        if (d < bestDist) { bestDist = d; bestTarget = pt; }
+                    }
                 } else {
-                    a.autoTarget = null; 
+                    // ПРИОРИТЕТ 3: ЗАХВАТ ТЕРРИТОРИИ
+                    let sampleCount = Math.min(100, data.tiles.length); // Выбираем из случайных 100 клеток для создания фронта
+                    for (let i = 0; i < sampleCount; i++) {
+                        let idx = Math.floor(Math.random() * data.tiles.length);
+                        let pt = data.tiles[idx];
+                        let d = Math.hypot(a.x - pt.x, a.y - pt.y);
+                        if (d < bestDist) { bestDist = d; bestTarget = pt; }
+                    }
+                }
+
+                if (bestTarget) {
+                    // Легкий разброс, чтобы войска обступали цель, а не шли в один пиксель
+                    a.targetX = bestTarget.x + (Math.random() * 10 - 5);
+                    a.targetY = bestTarget.y + (Math.random() * 10 - 5);
                 }
             }
         }
@@ -293,12 +342,15 @@ setInterval(() => {
                 const b = room.armies[armyIds[j]]; const d = Math.hypot(a.x - b.x, a.y - b.y);
                 if (d < COLLISION_RADIUS * 2) {
                     if (a.owner !== b.owner) { 
-                        // БОЛЬШЕ НЕ СТИРАЕМ TARGET_X! Войска не забудут приказ!
+                        // Цель найдена, но маршрут НЕ стирается (продолжат идти после боя)
                         a.targets.push(b.id); b.targets.push(a.id); 
                     } 
-                    else { const p = (COLLISION_RADIUS * 2 - d) * 0.5; const ang = Math.atan2(a.y-b.y, a.x-b.x); a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p; stateChanged = true; }
+                    else { 
+                        // Отталкивание своих войск (уменьшено, чтобы могли окружать)
+                        const p = (COLLISION_RADIUS * 2 - d) * 0.5; const ang = Math.atan2(a.y-b.y, a.x-b.x); 
+                        a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p; stateChanged = true; 
+                    }
                 } else if (d < ENGAGE_RADIUS && a.owner !== b.owner) {
-                    // БОЛЬШЕ НЕ СТИРАЕМ TARGET_X!
                     a.targets.push(b.id); b.targets.push(a.id); 
                 }
             }
@@ -370,12 +422,16 @@ setInterval(() => {
             }
         });
 
-        // СКОРОСТЬ УРОНА СНИЖЕНА В 2 РАЗА (с 0.015 до 0.0075)
+        // --- УЛУЧШЕННАЯ СИСТЕМА УРОНА ПРИ ОКРУЖЕНИИ ---
         armyIds.forEach(id => {
             const a = room.armies[id];
             if (a.targets.length) { 
-                const t = room.armies[a.targets[0]]; 
-                if (t) t.dmg += (a.count * 0.0075) * (1 + (t.targets.length - 1) * 0.5); 
+                // Урон (0.0075) делится поровну между всеми целями
+                let dmgToDeal = (a.count * 0.0075) / a.targets.length; 
+                a.targets.forEach(tId => {
+                    const t = room.armies[tId];
+                    if (t) t.dmg += dmgToDeal * (1 + (t.targets.length - 1) * 0.2); // Бонус за окружение врага
+                });
             }
         });
 
