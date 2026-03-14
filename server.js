@@ -21,14 +21,9 @@ const COLLISION_RADIUS = 6;
 function createRoom(roomId, presetData = null) {
     let room = {
         id: roomId,
-        countries: {},
-        territory: {},
-        armies: {},
-        regions: {},
-        pendingDeployments: [],
-        batchedCellUpdates: {},
-        mapChangedForCauldrons: false,
-        fillQ: [],
+        countries: {}, territory: {}, armies: {}, regions: {},
+        pendingDeployments: [], batchedCellUpdates: {},
+        mapChangedForCauldrons: false, fillQ: [],
         sX: 0, sY: 0,
         vstd: new Uint8Array((WORLD_WIDTH / TILE_SIZE) * (WORLD_HEIGHT / TILE_SIZE)),
         qX: new Int32Array((WORLD_WIDTH / TILE_SIZE) * (WORLD_HEIGHT / TILE_SIZE)),
@@ -47,52 +42,44 @@ createRoom('MAIN');
 io.on('connection', (socket) => {
     socket.on('joinRoom', (roomId, callback) => {
         if (!rooms[roomId]) return callback({ success: false, msg: "Комната не найдена" });
-        socket.join(roomId); playerToRoom[socket.id] = roomId;
-        callback({ success: true });
-        const room = rooms[roomId];
-        socket.emit('initLobby', room.countries);
-        socket.emit('initData', { countries: room.countries, territory: room.territory, armies: room.armies, regions: room.regions });
+        socket.join(roomId); playerToRoom[socket.id] = roomId; callback({ success: true });
+        socket.emit('initLobby', rooms[roomId].countries);
+        socket.emit('initData', { countries: rooms[roomId].countries, territory: rooms[roomId].territory, armies: rooms[roomId].armies, regions: rooms[roomId].regions });
     });
 
     socket.on('createRoom', (data, callback) => {
         const newCode = Math.random().toString(36).substr(2, 5).toUpperCase();
-        let preset = data.presetName ? presets[data.presetName] : null;
-        createRoom(newCode, preset);
-        socket.join(newCode); playerToRoom[socket.id] = newCode;
-        callback({ success: true, roomId: newCode });
-        const room = rooms[newCode];
-        socket.emit('initLobby', room.countries);
-        socket.emit('initData', { countries: room.countries, territory: room.territory, armies: room.armies, regions: room.regions });
+        createRoom(newCode, data.presetName ? presets[data.presetName] : null);
+        socket.join(newCode); playerToRoom[socket.id] = newCode; callback({ success: true, roomId: newCode });
+        socket.emit('initLobby', rooms[newCode].countries);
+        socket.emit('initData', { countries: rooms[newCode].countries, territory: rooms[newCode].territory, armies: rooms[newCode].armies, regions: rooms[newCode].regions });
     });
 
     socket.on('savePreset', (presetName) => {
         const roomId = playerToRoom[socket.id]; if (!roomId || !rooms[roomId]) return;
-        const room = rooms[roomId];
-        let savedCountries = JSON.parse(JSON.stringify(room.countries));
+        let savedCountries = JSON.parse(JSON.stringify(rooms[roomId].countries));
         for(let k in savedCountries) { savedCountries[k].socketId = null; savedCountries[k].online = false; }
-        presets[presetName] = { countries: savedCountries, territory: JSON.parse(JSON.stringify(room.territory)), regions: JSON.parse(JSON.stringify(room.regions)) };
+        presets[presetName] = { countries: savedCountries, territory: JSON.parse(JSON.stringify(rooms[roomId].territory)), regions: JSON.parse(JSON.stringify(rooms[roomId].regions)) };
         socket.emit('presetSaved');
     });
 
     socket.on('joinGame', (data) => {
         const roomId = playerToRoom[socket.id] || 'MAIN'; if (!rooms[roomId]) return; const room = rooms[roomId];
-        for (let k in room.countries) { if (room.countries[k].socketId === socket.id) { room.countries[k].socketId = null; } }
-        let cId;
+        for (let k in room.countries) { if (room.countries[k].socketId === socket.id) room.countries[k].socketId = null; }
+        let cId = data.isNew ? `c_${Math.random().toString(36).substr(2, 9)}` : data.countryId;
         if (data.isNew) {
-            cId = `c_${Math.random().toString(36).substr(2, 9)}`;
             room.countries[cId] = { id: cId, name: data.name, flag: data.flag, color: data.color, socketId: socket.id, cells: 0, dollars: 10000, population: 100000, military: 10000, cap: 10000, isSpawned: false, online: true };
-        } else {
-            cId = data.countryId; if (room.countries[cId]) { room.countries[cId].online = true; room.countries[cId].socketId = socket.id; }
+            io.to(roomId).emit('newsEvent', `🌍 Новая нация "${data.name}" появилась на мировой арене!`);
+        } else if (room.countries[cId]) {
+            room.countries[cId].online = true; room.countries[cId].socketId = socket.id;
         }
-        socket.emit('joinSuccess', cId); 
-        io.to(roomId).emit('initLobby', room.countries);
-        io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
+        socket.emit('joinSuccess', cId); io.to(roomId).emit('initLobby', room.countries); io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
     });
 
     socket.on('switchCountry', (cId) => {
         const roomId = playerToRoom[socket.id]; if (!roomId || !rooms[roomId]) return; const room = rooms[roomId];
         if (room.countries[cId]) {
-            for (let k in room.countries) { if (room.countries[k].socketId === socket.id) { room.countries[k].socketId = null; } }
+            for (let k in room.countries) if (room.countries[k].socketId === socket.id) room.countries[k].socketId = null;
             room.countries[cId].socketId = socket.id; socket.emit('joinSuccess', cId);
             io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
         }
@@ -101,8 +88,7 @@ io.on('connection', (socket) => {
     socket.on('spawnCapital', (data) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
-        const country = room.countries[cId];
-        if (!country || country.isSpawned) return;
+        const country = room.countries[cId]; if (!country || country.isSpawned) return;
 
         country.isSpawned = true;
         const startRegionId = `reg_${cId}_cap`;
@@ -113,14 +99,14 @@ io.on('connection', (socket) => {
                 if(dx*dx + dy*dy <= 36) { 
                     const cx = data.x + dx; const cy = data.y + dy;
                     if (cx >= 0 && cx < WORLD_WIDTH/TILE_SIZE && cy >= 0 && cy < WORLD_HEIGHT/TILE_SIZE) {
-                        const key = `${cx}_${cy}`;
-                        room.territory[key] = { owner: cId, regionId: startRegionId };
+                        const key = `${cx}_${cy}`; room.territory[key] = { owner: cId, regionId: startRegionId };
                         country.cells++; room.regions[startRegionId].cells++;
                     }
                 }
             }
         }
         room.mapChangedForCauldrons = true;
+        io.to(roomId).emit('newsEvent', `🏛️ Нация ${country.name} основала свою столицу!`);
         io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
     });
 
@@ -128,8 +114,7 @@ io.on('connection', (socket) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
         if (!cId || !data.tiles.length) return;
-        let ownedTiles = [];
-        data.tiles.forEach(key => { if (room.territory[key] && room.territory[key].owner === cId) ownedTiles.push(key); });
+        let ownedTiles = []; data.tiles.forEach(key => { if (room.territory[key] && room.territory[key].owner === cId) ownedTiles.push(key); });
         if (ownedTiles.length === 0) return; 
 
         if (!room.regions[data.newRegionId]) {
@@ -161,12 +146,22 @@ io.on('connection', (socket) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
         const reg = room.regions[data.regionId];
-        if (reg && reg.owner === cId) {
-            if (room.countries[cId].military >= data.amount) {
-                room.countries[cId].military -= data.amount;
-                room.pendingDeployments.push({ owner: cId, amount: parseInt(data.amount), regionId: data.regionId, readyAt: Date.now() + 5000 });
-                io.to(roomId).emit('updateResources', room.countries);
-            }
+        if (reg && reg.owner === cId && room.countries[cId].military >= data.amount) {
+            room.countries[cId].military -= data.amount;
+            room.pendingDeployments.push({ owner: cId, amount: parseInt(data.amount), regionId: data.regionId, readyAt: Date.now() + 5000 });
+            io.to(roomId).emit('updateResources', room.countries);
+        }
+    });
+
+    // РОСПУСК АРМИИ
+    socket.on('disbandArmy', (armyId) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        if (room.armies[armyId] && room.armies[armyId].owner === cId) {
+            room.countries[cId].military += Math.floor(room.armies[armyId].count); // Возвращаем войска
+            delete room.armies[armyId]; // Удаляем армию
+            io.to(roomId).emit('syncArmies', room.armies);
+            io.to(roomId).emit('updateResources', room.countries);
         }
     });
 
@@ -181,15 +176,7 @@ io.on('connection', (socket) => {
         });
     });
     
-    socket.on('disconnect', () => {
-        const roomId = playerToRoom[socket.id];
-        if (roomId && rooms[roomId]) {
-            const cId = Object.keys(rooms[roomId].countries).find(key => rooms[roomId].countries[key].socketId === socket.id);
-            if (cId) rooms[roomId].countries[cId].online = false;
-            io.to(roomId).emit('initLobby', rooms[roomId].countries); 
-        }
-        delete playerToRoom[socket.id];
-    });
+    socket.on('disconnect', () => { delete playerToRoom[socket.id]; });
 });
 
 setInterval(() => {
@@ -205,8 +192,7 @@ setInterval(() => {
 setInterval(() => {
     const now = Date.now();
     for (let roomId in rooms) {
-        let room = rooms[roomId];
-        let stateChanged = false;
+        let room = rooms[roomId]; let stateChanged = false;
 
         for (let i = room.pendingDeployments.length - 1; i >= 0; i--) {
             const dep = room.pendingDeployments[i];
@@ -214,7 +200,9 @@ setInterval(() => {
                 const reg = room.regions[dep.regionId];
                 if (reg && reg.owner === dep.owner) {
                     const id = `a_${Math.random().toString(36).substr(2, 9)}`;
-                    room.armies[id] = { id, owner: dep.owner, count: dep.amount, x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: 0.6 };
+                    // Базовая скорость маленькая, чем больше армия, тем она еще медленнее (эпичность)
+                    const speed = Math.max(0.1, 0.4 - (dep.amount / 100000));
+                    room.armies[id] = { id, owner: dep.owner, count: dep.amount, x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: speed };
                     stateChanged = true;
                 } else { if (room.countries[dep.owner]) room.countries[dep.owner].military += dep.amount; }
                 room.pendingDeployments.splice(i, 1); io.to(roomId).emit('updateResources', room.countries);
@@ -244,25 +232,23 @@ setInterval(() => {
                 if (d > a.speed) { a.x += ((a.targetX-a.x)/d)*a.speed; a.y += ((a.targetY-a.y)/d)*a.speed; stateChanged = true; } else { a.targetX = null; }
             }
             
-            // --- РАСШИРЕНИЕ ПРОПОРЦИОНАЛЬНО ВОЙСКАМ (ТОЛЩИНА КИСТИ) ---
+            // ТОЛЩИНА КИСТИ ЗАВИСИТ ОТ КОЛИЧЕСТВА ВОЙСК
             const cellX = Math.floor(a.x/TILE_SIZE); const cellY = Math.floor(a.y/TILE_SIZE);
-            // Формула: чем больше войск, тем шире радиус закраски клеток вокруг армии.
-            const brushR = Math.max(1, Math.min(6, Math.floor(Math.sqrt(a.count) / 25))); 
+            const brushR = Math.max(0, Math.min(4, Math.floor(Math.sqrt(a.count) / 40))); // От 1x1 до широкой полосы
             
             for(let dx = -brushR; dx <= brushR; dx++) {
                 for(let dy = -brushR; dy <= brushR; dy++) {
-                    if(dx*dx + dy*dy <= brushR*brushR) {
+                    if(dx*dx + dy*dy <= brushR*brushR || brushR === 0) {
                         const cx = cellX + dx; const cy = cellY + dy;
                         if(cx < 0 || cx >= WORLD_WIDTH/TILE_SIZE || cy < 0 || cy >= WORLD_HEIGHT/TILE_SIZE) continue;
-                        const cellKey = `${cx}_${cy}`;
-                        const cell = room.territory[cellKey];
+                        const cellKey = `${cx}_${cy}`; const cell = room.territory[cellKey];
                         
                         if (!cell || cell.owner !== a.owner) {
                             const oldOwner = cell ? cell.owner : null;
                             if (oldOwner && room.countries[oldOwner]) room.countries[oldOwner].cells--;
                             if (cell && cell.regionId && room.regions[cell.regionId]) room.regions[cell.regionId].cells--;
                             
-                            const newRegId = `reg_${a.owner}_cap`; // Приписываем к столице по умолчанию
+                            const newRegId = `reg_${a.owner}_cap`;
                             room.territory[cellKey] = { owner: a.owner, regionId: newRegId };
                             if (room.countries[a.owner]) room.countries[a.owner].cells++;
                             if (room.regions[newRegId]) room.regions[newRegId].cells++;
@@ -281,7 +267,12 @@ setInterval(() => {
 
         armyIds.forEach(id => {
             if (room.armies[id].dmg > 0) { room.armies[id].count -= room.armies[id].dmg; stateChanged = true; }
-            if (room.armies[id].count <= 0) delete room.armies[id];
+            if (room.armies[id].count <= 0) {
+                if (room.countries[room.armies[id].owner]) {
+                    io.to(roomId).emit('newsEvent', `💀 Дивизия ${room.countries[room.armies[id].owner].name} полностью уничтожена в бою!`);
+                }
+                delete room.armies[id];
+            }
         });
 
         if (stateChanged) io.to(roomId).emit('syncArmies', room.armies);
@@ -290,7 +281,6 @@ setInterval(() => {
 
 const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
 
-// Алгоритм Котлов (Cauldrons)
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
@@ -313,8 +303,7 @@ setInterval(() => {
         if (!room.mapChangedForCauldrons) continue;
         let armyLocs = {}; for(let id in room.armies) { let k = `${Math.floor(room.armies[id].x/TILE_SIZE)}_${Math.floor(room.armies[id].y/TILE_SIZE)}`; if(!armyLocs[k]) armyLocs[k] = []; armyLocs[k].push(room.armies[id].owner); }
         
-        let checked = 0;
-        let totalOwnedCells = 0;
+        let checked = 0; let totalOwnedCells = 0;
         for (let c in room.countries) { if(room.countries[c].isSpawned) totalOwnedCells += room.countries[c].cells; }
 
         while (checked < 3000) {
@@ -351,7 +340,9 @@ setInterval(() => {
                     let winId = Array.from(owners)[0];
                     if (winId !== startOwner && winId !== 'neutral') { 
                         let rId = `reg_${winId}_cap`; if (!room.regions[rId]) room.regions[rId] = { name: "Столица", owner: winId, cells: 0, level: 1, defLevel: 0 };
-                        comp.reverse().forEach(c => room.fillQ.push({...c, owner: winId, regId: rId})); break;
+                        comp.reverse().forEach(c => room.fillQ.push({...c, owner: winId, regId: rId})); 
+                        if (startOwner) io.to(roomId).emit('newsEvent', `⚔️ Окружение! Войска ${room.countries[winId] ? room.countries[winId].name : 'врага'} замкнули котел!`);
+                        break;
                     }
                 }
             }
@@ -382,4 +373,4 @@ setInterval(() => {
     }
 }, 1000);
 
-server.listen(process.env.PORT || 3000, () => console.log('HOI4 SERVER GRID ONLINE'));
+server.listen(process.env.PORT || 3000, () => console.log('HOI4 SERVER ONLINE'));
