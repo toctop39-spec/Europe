@@ -16,7 +16,6 @@ let isPanning = false; let lastMouse = {x: 0, y: 0};
 let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
 
-// Стейт для Авто-атаки
 let isSelectingAutoAttackTarget = false;
 
 const sysMsg = document.getElementById('systemMsg');
@@ -37,7 +36,26 @@ window.addEventListener('keyup', (e) => { if (!e.key) return; let key = e.key.to
 
 let base64Flag = null; let edBase64Flag = null; const flagCache = {}; 
 function getFlagImage(cId, base64Str) { if (!flagCache[cId]) { const img = new Image(); img.src = base64Str; flagCache[cId] = img; } return flagCache[cId]; }
-function processFlag(file, isEd) { if (file) { const reader = new FileReader(); reader.onload = (ev) => { const img = new Image(); img.onload = () => { const tempCanvas = document.createElement('canvas'); tempCanvas.width = 64; tempCanvas.height = 64; const tCtx = tempCanvas.getContext('2d'); tCtx.drawImage(img, 0, 0, 64, 64); if(isEd) edBase64Flag = tempCanvas.toDataURL('image/png'); else base64Flag = tempCanvas.toDataURL('image/png'); }; img.src = ev.target.result; }; reader.readAsDataURL(file); } }
+
+// Конвертация загруженного флага
+function processFlag(file, isEd) { 
+    if (file) { 
+        const reader = new FileReader(); 
+        reader.onload = (ev) => { 
+            const img = new Image(); 
+            img.onload = () => { 
+                const tempCanvas = document.createElement('canvas'); 
+                tempCanvas.width = 64; tempCanvas.height = 64; 
+                const tCtx = tempCanvas.getContext('2d'); 
+                tCtx.drawImage(img, 0, 0, 64, 64); 
+                if(isEd) edBase64Flag = tempCanvas.toDataURL('image/png'); 
+                else base64Flag = tempCanvas.toDataURL('image/png'); 
+            }; 
+            img.src = ev.target.result; 
+        }; 
+        reader.readAsDataURL(file); 
+    } 
+}
 document.getElementById('countryFlagFile')?.addEventListener('change', (e) => processFlag(e.target.files[0], false));
 document.getElementById('edCountryFlagFile')?.addEventListener('change', (e) => processFlag(e.target.files[0], true));
 
@@ -50,12 +68,25 @@ document.getElementById('joinBtn')?.addEventListener('click', () => {
     const selectVal = document.getElementById('countrySelect').value;
     if (selectVal === 'new') {
         const name = document.getElementById('countryName').value || 'Империя'; const color = document.getElementById('countryColor').value;
-        let finalFlag = base64Flag; if (!finalFlag) { const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); finalFlag = tCnv.toDataURL(); }
+        let finalFlag = base64Flag; 
+        if (!finalFlag) { 
+            const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; 
+            const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
+            finalFlag = tCnv.toDataURL(); 
+        }
         socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag });
     } else { socket.emit('joinGame', { isNew: false, countryId: selectVal }); }
 });
 
-socket.on('joinSuccess', (cId) => { myId = cId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('sideMenu').style.display = 'block'; isPlaying = true; updateEditorList(); });
+socket.on('joinSuccess', (cId) => { 
+    myId = cId; 
+    document.getElementById('setupScreen').style.display = 'none'; 
+    document.getElementById('topBar').style.display = 'flex'; 
+    document.getElementById('sideMenu').style.display = 'block'; 
+    isPlaying = true; 
+    updateEditorList(); 
+    if (countries[myId]) updateUI(); // Сразу же обновляем UI при коннекте
+});
 
 window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '' }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; } }); }
 window.edCreateCountry = function() { const name = document.getElementById('edCountryName').value || 'Новая Страна'; const color = document.getElementById('edCountryColor').value; let finalFlag = edBase64Flag; if (!finalFlag) { const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); finalFlag = tCnv.toDataURL(); } socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag }); edBase64Flag = null; const fi = document.getElementById('edCountryFlagFile'); if(fi) fi.value = ""; }
@@ -71,7 +102,6 @@ document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (c
 document.getElementById('upgradeRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRegion', clickedRegionId); });
 document.getElementById('defendRegBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('buildDefense', clickedRegionId); });
 
-// МАССОВЫЙ РОСПУСК АРМИЙ
 document.getElementById('disbandBtn')?.addEventListener('click', () => { 
     if (selectedArmies.length > 0) { 
         socket.emit('disbandArmies', selectedArmies); 
@@ -80,7 +110,6 @@ document.getElementById('disbandBtn')?.addEventListener('click', () => {
     } 
 });
 
-// ЛОГИКА КНОПКИ АВТО-АТАКИ
 document.getElementById('autoAttackBtn')?.addEventListener('click', () => {
     isSelectingAutoAttackTarget = !isSelectingAutoAttackTarget;
     const btn = document.getElementById('autoAttackBtn');
@@ -104,7 +133,7 @@ socket.on('syncArmies', (a) => {
         visualArmies[id].autoTarget = armies[id].autoTarget; 
     } 
     selectedArmies = selectedArmies.filter(id => armies[id]);
-    updateArmyPanel(); // <--- Из-за этого вызова сбрасывалась кнопка
+    updateArmyPanel();
 });
 
 function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
@@ -126,10 +155,23 @@ function gameLoop() {
     drawMap(); requestAnimationFrame(gameLoop);
 }
 
+// === НАДЕЖНОЕ ОБНОВЛЕНИЕ ИНТЕРФЕЙСА (ФИКС ФЛАГОВ) ===
 function updateUI() {
     if (myId && countries[myId]) {
         const nameEl = document.getElementById('myName');
-        if (nameEl && nameEl.innerText === "") { nameEl.innerText = countries[myId].name; document.getElementById('myFlagUI').src = countries[myId].flag; isSpawned = countries[myId].isSpawned; }
+        const flagEl = document.getElementById('myFlagUI');
+        
+        if (nameEl && nameEl.innerText !== countries[myId].name) {
+            nameEl.innerText = countries[myId].name;
+        }
+        
+        // Надежная установка картинки флага
+        if (flagEl && flagEl.getAttribute('src') !== countries[myId].flag) {
+            flagEl.setAttribute('src', countries[myId].flag);
+        }
+        
+        isSpawned = countries[myId].isSpawned;
+        
         document.getElementById('myArea').innerText = (countries[myId].cells * KM_PER_TILE).toLocaleString();
         document.getElementById('myPop').innerText = Math.floor(countries[myId].population).toLocaleString();
         document.getElementById('myDollars').innerText = Math.floor(countries[myId].dollars).toLocaleString();
@@ -164,7 +206,6 @@ function updateRegionPanel() {
     }
 }
 
-// === ИСПРАВЛЕННАЯ ПАНЕЛЬ АРМИИ ===
 function updateArmyPanel() {
     const ap = document.getElementById('armyPanel'); if (!ap) return;
     
@@ -172,16 +213,11 @@ function updateArmyPanel() {
     
     if (mySelected.length > 0 && mySelected.length === selectedArmies.length) {
         ap.style.display = 'block';
-        
         let totalCount = 0;
         mySelected.forEach(id => totalCount += armies[id].count);
-        
-        // Показываем суммарное количество войск (обновляется без сброса кнопки)
         document.getElementById('armyCount').innerText = Math.floor(totalCount) + (mySelected.length > 1 ? ` (${mySelected.length} див.)` : ' ед.');
-        
     } else { 
         ap.style.display = 'none'; 
-        // Сбрасываем режим выбора цели ТОЛЬКО когда мы сняли выделение с армий
         isSelectingAutoAttackTarget = false;
         if (document.getElementById('autoAttackBtn')) {
             document.getElementById('autoAttackBtn').style.background = '#f39c12';
@@ -340,7 +376,6 @@ canvas.addEventListener('mousedown', (e) => {
     const world = getWorldCoords(e);
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
     
-    // ОТПРАВКА СРАЗУ МАССИВА АРМИЙ НА АВТО-АТАКУ
     if (isSelectingAutoAttackTarget && e.button === 0) {
         isSelectingAutoAttackTarget = false;
         document.getElementById('autoAttackBtn').style.background = '#f39c12';
