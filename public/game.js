@@ -374,13 +374,21 @@ function drawMap() {
             ctx.fillStyle = 'rgba(241, 196, 15, 0.5)'; ctx.fillRect(army.x - (rw/2) - 4/camera.zoom, army.y - (rh/2) - 4/camera.zoom, rw + 8/camera.zoom, rh + 8/camera.zoom);
         }
 
-        ctx.fillStyle = owner.color; ctx.fillRect(army.x - rw/2, army.y - rh/2, rw, rh);
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / camera.zoom; ctx.strokeRect(army.x - rw/2, army.y - rh/2, rw, rh);
+// Получаем картинку флага для армии
+        const flagImg = getFlagImage(army.owner, owner.flag);
 
-        ctx.beginPath();
-        ctx.moveTo(army.x - rw/2, army.y - rh/2); ctx.lineTo(army.x + rw/2, army.y + rh/2);
-        ctx.moveTo(army.x + rw/2, army.y - rh/2); ctx.lineTo(army.x - rw/2, army.y + rh/2);
-        ctx.stroke();
+        // Рисуем подложку (цвет страны)
+        ctx.fillStyle = owner.color; 
+        ctx.fillRect(army.x - rw/2, army.y - rh/2, rw, rh);
+
+        // Рисуем сам флаг поверх подложки
+        if (flagImg.complete && flagImg.naturalWidth > 0) {
+            ctx.drawImage(flagImg, army.x - rw/2, army.y - rh/2, rw, rh);
+        }
+
+        // Красивая белая рамка вокруг флага
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / camera.zoom; 
+        ctx.strokeRect(army.x - rw/2, army.y - rh/2, rw, rh);
 
         ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.strokeStyle = 'black'; ctx.lineWidth = 2 / camera.zoom; ctx.textAlign = 'center';
         const countText = Math.floor(army.count).toString();
