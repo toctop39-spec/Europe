@@ -3,136 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Strategy - Multiplayer</title>
+    <title>Tactical Influence Map</title>
     <style>
-        body { background: #111; color: #ddd; font-family: 'Arial', sans-serif; margin: 0; overflow: hidden; user-select: none; }
-        canvas { display: block; }
+        body { background: #f3e5d8; color: #1f2937; font-family: 'Arial', sans-serif; margin: 0; overflow: hidden; user-select: none; }
+        canvas { display: block; cursor: crosshair; }
         
-        #topBar { background: linear-gradient(to bottom, #333, #1a1a1a); border-bottom: 2px solid #555; padding: 5px 15px; display: flex; justify-content: space-between; align-items: center; font-size: 13px; position: absolute; width: 100%; box-sizing: border-box; z-index: 10; }
-        .stat-box { background: rgba(0,0,0,0.5); border: 1px solid #444; padding: 4px 8px; border-radius: 3px; display: flex; align-items: center; gap: 5px; }
-        .stat-icon { font-size: 14px; }
+        #topBar { background: rgba(255,255,255,0.9); border-bottom: 2px solid #ccc; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; font-size: 14px; position: absolute; width: 100%; box-sizing: border-box; z-index: 10; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .stat-box { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 6px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px; font-weight: bold; }
+        .stat-icon { font-size: 16px; }
         
-        #setupScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 1000; }
-        .panel { background: #1a1a1a; padding: 30px; border-radius: 5px; border: 1px solid #444; text-align: center; width: 350px; }
-        .panel h2 { margin-top: 0; color: #ecf0f1; }
-        .panel input, .panel select { padding: 10px; width: 90%; box-sizing: border-box; margin-bottom: 15px; background: #222; color: white; border: 1px solid #555; border-radius: 3px; }
-        .panel button { padding: 12px; width: 100%; background: #2c3e50; color: white; border: 1px solid #555; cursor: pointer; font-weight: bold; margin-bottom: 10px; }
-        .panel button:hover { background: #34495e; }
-        .btn-military { background: #c0392b !important; } .btn-military:hover { background: #e74c3c !important; }
+        #setupScreen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .panel { background: #fff; padding: 30px; border-radius: 12px; border: 1px solid #ccc; text-align: center; width: 350px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        .panel h2 { margin-top: 0; color: #111; text-transform: uppercase; font-weight: 900; }
+        .panel input, .panel select { padding: 10px; width: 90%; box-sizing: border-box; margin-bottom: 15px; background: #f9fafb; color: #111; border: 1px solid #d1d5db; border-radius: 6px; }
+        .panel button { padding: 12px; width: 100%; background: #2563eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-bottom: 10px; text-transform: uppercase; }
+        .panel button:hover { background: #1d4ed8; }
         
-        #sideMenu { position: absolute; left: 15px; top: 60px; width: 280px; background: rgba(20,20,20,0.95); border: 1px solid #333; z-index: 10; display: none; }
-        .tabs { display: flex; border-bottom: 1px solid #444; }
-        .tab-btn { flex: 1; padding: 10px; background: #222; color: #aaa; border: none; cursor: pointer; font-size: 12px; font-weight: bold; }
-        .tab-btn.active { background: #3498db; color: white; }
-        .tab-content { padding: 15px; display: none; max-height: 400px; overflow-y: auto; }
-        .tab-content.active { display: block; }
-        
-        .btn-civil { width: 100%; padding: 8px; background: #2980b9; color: white; border: none; cursor: pointer; margin-bottom: 10px; font-weight: bold; }
+        #sideMenu { position: absolute; left: 20px; top: 80px; width: 300px; background: rgba(255,255,255,0.95); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); z-index: 10; display: none; padding: 20px; border: 1px solid #e5e7eb; }
+        .btn-civil { width: 100%; padding: 10px; background: #10b981; color: white; border: none; border-radius: 6px; cursor: pointer; margin-bottom: 10px; font-weight: bold; text-transform: uppercase; }
 
-        #regionPanel { position: absolute; right: 15px; top: 60px; width: 260px; background: rgba(20,20,20,0.95); border: 1px solid #444; padding: 15px; z-index: 10; display: none; }
+        #cityPanel { position: absolute; right: 20px; top: 80px; width: 280px; background: rgba(255,255,255,0.95); border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); padding: 20px; z-index: 10; display: none; border: 1px solid #e5e7eb; }
     </style>
 </head>
 <body>
     <div id="setupScreen">
         <div id="roomPanel" class="panel">
-            <h2>Глобальная Стратегия</h2>
-            <button onclick="showCreateRoom()">Создать сервер (Играть)</button>
-            <button onclick="showJoinRoom()">Присоединиться по коду</button>
-            <button onclick="startEditor()" style="background:#8e44ad; margin-top:20px;">Редактор заготовок</button>
+            <h2>Tactical Command</h2>
+            <button onclick="showCreateRoom()">Создать операцию</button>
+            <button onclick="showJoinRoom()">Присоединиться</button>
+            <button onclick="startEditor()" style="background:#8b5cf6; margin-top:20px;">Редактор сценариев</button>
         </div>
 
         <div id="createRoomPanel" class="panel" style="display:none;">
-            <h2>Создать сервер</h2>
-            <input type="text" id="presetNameInput" placeholder="Имя заготовки (пусто = новая карта)">
-            <button onclick="createRoom()">Создать</button>
-            <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
+            <h2>Создать операцию</h2>
+            <input type="text" id="presetNameInput" placeholder="Имя сценария (пусто = чистая карта)">
+            <button onclick="createRoom()">Запуск</button>
+            <button onclick="backToRoomPanel()" style="background:#ef4444;">Назад</button>
         </div>
 
         <div id="joinRoomPanel" class="panel" style="display:none;">
             <h2>Присоединиться</h2>
-            <input type="text" id="roomCodeInput" placeholder="Код комнаты (например, A7X9)" maxlength="5" style="text-transform: uppercase;">
+            <input type="text" id="roomCodeInput" placeholder="Код (например, A7X9)" maxlength="5" style="text-transform: uppercase;">
             <button onclick="joinRoom()">Войти</button>
-            <button onclick="backToRoomPanel()" class="btn-military">Назад</button>
+            <button onclick="backToRoomPanel()" style="background:#ef4444;">Назад</button>
         </div>
 
         <div id="countryPanel" class="panel" style="display:none;">
-            <h2>Выбор страны</h2>
-            <p style="margin-top:0; font-size:12px; color:#aaa;">Код комнаты: <b id="displaySetupRoomCode" style="color:#f1c40f; font-size:16px;"></b></p>
-            <select id="countrySelect"><option value="new">-- Новая (Пустошь) --</option></select>
+            <h2>Выбор Фракции</h2>
+            <p style="margin-top:0; font-size:12px; color:#6b7280;">Код сессии: <b id="displaySetupRoomCode" style="color:#2563eb; font-size:16px;"></b></p>
+            <select id="countrySelect"><option value="new">-- Новая Фракция --</option></select>
             <div id="newCountryForm">
-                <input type="text" id="countryName" placeholder="Название страны" maxlength="20">
-                <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px;">Флаг (картинка):</label>
+                <input type="text" id="countryName" placeholder="Название" maxlength="20">
+                <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px; color: #4b5563;">Эмблема:</label>
                 <input type="file" id="countryFlagFile" accept="image/*">
-                <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px;">Цвет на карте:</label>
-                <input type="color" id="countryColor" value="#2b5e8a" style="height:40px; cursor:pointer;">
+                <label style="display:block; font-size: 12px; text-align: left; margin-bottom: 5px; color: #4b5563;">Цвет контроля:</label>
+                <input type="color" id="countryColor" value="#3b82f6" style="height:40px; cursor:pointer;">
             </div>
-            <button id="joinBtn">Начать игру</button>
+            <button id="joinBtn">Начать операцию</button>
         </div>
     </div>
 
     <div id="topBar" style="display: none;">
         <div style="display: flex; align-items: center; gap: 10px;">
-            <img id="myFlagUI" style="width: 30px; height: 20px; border: 1px solid #fff; object-fit: cover;">
-            <span id="myName" style="font-weight: bold; font-size: 16px;"></span>
+            <img id="myFlagUI" style="width: 32px; height: 32px; border-radius: 4px; object-fit: cover;">
+            <span id="myName" style="font-weight: 900; font-size: 18px; text-transform: uppercase;"></span>
         </div>
         <div style="display: flex; gap: 10px;">
-            <div class="stat-box" title="Код сервера для друзей"><span class="stat-icon">🔑</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
-            <div class="stat-box" title="Площадь"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
-            <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
-            <div class="stat-box" title="Рекруты"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
-            <div class="stat-box" title="Экономика"><span class="stat-icon">💲</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>/с)</div>
+            <div class="stat-box"><span class="stat-icon">🔑</span> <span id="myRoomCode" style="color:#2563eb;">---</span></div>
+            <div class="stat-box" title="Контроль площади"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
+            <div class="stat-box" title="Личный состав"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
+            <div class="stat-box" title="Бюджет"><span class="stat-icon">💲</span> <span id="myDollars">0</span> (<span id="myIncome">0</span>/с)</div>
         </div>
     </div>
 
     <div id="sideMenu">
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('tab-manage')">Управление</button>
-            <button class="tab-btn" id="editorTabBtn" style="display:none;" onclick="switchTab('tab-editor')">Редактор</button>
-        </div>
-        
-        <div id="tab-manage" class="tab-content active">
-            <button id="drawRegionBtn" class="btn-civil">Сформировать регион (Лассо)</button>
-            <p id="systemMsg" style="font-size: 11px; color: #aaa; text-align: center;">ЛКМ - выбор, ПКМ - движение войск.</p>
-        </div>
+        <h3 style="margin-top:0; text-transform:uppercase; font-weight:900;">Управление</h3>
+        <button id="buildCityBtn" class="btn-civil" style="background:#f59e0b;">⛺ Основать Форпост (1000 ед.)</button>
+        <p id="systemMsg" style="font-size: 11px; color: #6b7280; text-align: center; font-weight:bold;">ЛКМ - выбор. ПКМ - приказ на марш.</p>
 
-        <div id="tab-editor" class="tab-content">
-            <h4 style="margin-top:0;">Создать новую страну</h4>
-            <input type="text" id="edCountryName" placeholder="Название страны" style="width:100%; box-sizing:border-box; padding:5px; margin-bottom:5px; background:#222; color:#fff; border:1px solid #555;">
-            <label style="display:block; font-size: 11px; margin-bottom: 2px;">Флаг:</label>
-            <input type="file" id="edCountryFlagFile" accept="image/*" style="width:100%; box-sizing:border-box; margin-bottom:5px;">
-            <label style="display:block; font-size: 11px; margin-bottom: 2px;">Цвет:</label>
-            <input type="color" id="edCountryColor" value="#e74c3c" style="width:100%; height:30px; margin-bottom:5px; cursor:pointer;">
-            <button class="btn-civil" onclick="edCreateCountry()">Создать и переключиться</button>
-            <hr style="border-color:#444;">
-            <h4 style="margin-bottom:5px;">Список стран (Клик для смены):</h4>
-            <div id="edCountryList" style="max-height:150px; overflow-y:auto; margin-bottom:10px;"></div>
-            <hr style="border-color:#444;">
-            <button class="btn-civil" style="background:#f39c12; color:#111;" onclick="edSaveAndExit()">💾 Сохранить пресет и выйти</button>
+        <div id="editorTools" style="display:none; margin-top: 20px; padding-top: 20px; border-top: 2px solid #e5e7eb;">
+            <h4 style="margin-top:0; text-transform:uppercase;">Инструменты Сценария</h4>
+            <input type="text" id="edCountryName" placeholder="Имя фракции" style="width:100%; box-sizing:border-box; padding:8px; margin-bottom:8px; border:1px solid #ccc; border-radius:4px;">
+            <input type="color" id="edCountryColor" value="#ef4444" style="width:100%; height:30px; margin-bottom:8px; cursor:pointer;">
+            <button class="btn-civil" style="background:#8b5cf6;" onclick="edCreateCountry()">Создать Фракцию</button>
+            <div id="edCountryList" style="max-height:100px; overflow-y:auto; margin-bottom:10px;"></div>
+            <button class="btn-civil" style="background:#111;" onclick="edSaveAndExit()">💾 Сохранить сценарий</button>
         </div>
     </div>
 
-    <div id="regionPanel">
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-            <h3 id="regName" style="margin: 0 0 10px 0;">Регион</h3>
-            <button id="renameRegBtn" style="background: none; border: 1px solid #555; color: #aaa; cursor: pointer; padding: 2px 5px;">✏️</button>
-        </div>
-        <p style="font-size: 13px; color: #ccc;">Владелец: <span id="regOwner"></span></p>
-        <p style="font-size: 13px;">Клеток: <span id="regCells">0</span></p>
-        <hr style="border-color: #444;">
-        <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 5px; background:#222; color:#fff; border:1px solid #444; padding:5px;">
-        <button id="deployBtn" class="btn-civil" style="background:#8e44ad;">Развернуть войска</button>
-        <button id="closeRegBtn" style="width: 100%; padding: 5px; margin-top: 10px; background: #555; color: white; border: none;">Закрыть</button>
+    <div id="cityPanel">
+        <h3 id="cityName" style="margin: 0 0 5px 0; text-transform:uppercase; font-weight:900;">Объект</h3>
+        <p style="font-size: 13px; color: #4b5563; margin-top:0;">Контроль: <span id="cityOwner" style="font-weight:bold;"></span></p>
+        <hr style="border-color: #e5e7eb; margin: 15px 0;">
+        <input type="number" id="deployAmount" value="1000" min="100" step="100" style="width: 100%; box-sizing: border-box; margin-bottom: 10px; padding:8px; border:1px solid #ccc; border-radius:4px;">
+        <button id="deployBtn" class="btn-civil" style="background:#2563eb;">Сформировать Бригаду</button>
+        <button id="closeCityBtn" style="width: 100%; padding: 8px; background: #9ca3af; color: white; border: none; border-radius:6px; font-weight:bold;">Отмена</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            const tabContent = document.getElementById(tabId); if (tabContent) tabContent.classList.add('active');
-            const btn = document.querySelector(`.tab-btn[onclick*="${tabId}"]`); if (btn) btn.classList.add('active');
-        }
         function showCreateRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('createRoomPanel').style.display = 'block'; }
         function showJoinRoom() { document.getElementById('roomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'block'; }
         function backToRoomPanel() { document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('roomPanel').style.display = 'block'; }
