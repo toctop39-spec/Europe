@@ -386,14 +386,6 @@ function drawMap() {
             ctx.drawImage(flagImg, army.x - rw/2, army.y - rh/2, rw, rh);
         }
 
-        // Красивая белая рамка вокруг флага
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / camera.zoom; 
-        ctx.strokeRect(army.x - rw/2, army.y - rh/2, rw, rh);
-
-        ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.strokeStyle = 'black'; ctx.lineWidth = 2 / camera.zoom; ctx.textAlign = 'center';
-        const countText = Math.floor(army.count).toString();
-        ctx.strokeText(countText, army.x, army.y + rh/2 + (12 / camera.zoom)); ctx.fillText(countText, army.x, army.y + rh/2 + (12 / camera.zoom));
-
         if (army.autoTarget) {
             ctx.fillStyle = '#f1c40f';
             ctx.font = `bold ${12 / camera.zoom}px Arial`;
