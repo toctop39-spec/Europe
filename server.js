@@ -33,7 +33,6 @@ function createRoom(roomId, presetData = null) {
         room.countries = JSON.parse(JSON.stringify(presetData.countries));
         room.territory = JSON.parse(JSON.stringify(presetData.territory));
         room.regions = JSON.parse(JSON.stringify(presetData.regions));
-        // Фикс для старых пресетов: добавляем core
         for(let k in room.territory) {
             if (!room.territory[k].core) room.territory[k].core = room.territory[k].owner;
         }
@@ -43,13 +42,11 @@ function createRoom(roomId, presetData = null) {
 
 createRoom('MAIN');
 
-// ФУНКЦИЯ ПРОВЕРКИ АННЕКСИИ
 function checkCountryDeath(room, cId, roomId) {
     if (cId && room.countries[cId] && room.countries[cId].cells <= 0) {
-        // Страна уничтожена! Ассимилируем все оккупированные ею земли (меняем core)
         for (let k in room.territory) {
             if (room.territory[k].core === cId) {
-                room.territory[k].core = room.territory[k].owner; // Становится исконной территорией захватчика
+                room.territory[k].core = room.territory[k].owner; 
                 room.batchedCellUpdates[k] = room.territory[k];
             }
         }
@@ -108,7 +105,7 @@ io.on('connection', (socket) => {
 
         country.isSpawned = true;
         const startRegionId = `reg_${cId}_cap`;
-        room.regions[startRegionId] = { name: "Столичный округ", owner: cId, cells: 0, level: 1, cityX: data.x, cityY: data.y };
+        room.regions[startRegionId] = { name: "Столичный округ", owner: cId, cells: 0, level: 1, roadLevel: 0, cityX: data.x, cityY: data.y };
 
         for(let dx = -6; dx <= 6; dx++) {
             for(let dy = -6; dy <= 6; dy++) {
@@ -116,7 +113,6 @@ io.on('connection', (socket) => {
                     const cx = data.x + dx; const cy = data.y + dy;
                     if (cx >= 0 && cx < WORLD_WIDTH/TILE_SIZE && cy >= 0 && cy < WORLD_HEIGHT/TILE_SIZE) {
                         const key = `${cx}_${cy}`; 
-                        // CORE УСТАНАВЛИВАЕТСЯ ПРИ СПАВНЕ
                         room.territory[key] = { owner: cId, core: cId, regionId: startRegionId };
                         country.cells++; room.regions[startRegionId].cells++;
                     }
@@ -142,7 +138,7 @@ io.on('connection', (socket) => {
             let bestKey = ownedTiles[0]; let minDist = Infinity;
             ownedTiles.forEach(key => { const [x, y] = key.split('_').map(Number); const d = Math.hypot(x - avgX, y - avgY); if (d < minDist) { minDist = d; bestKey = key; } });
             const [fX, fY] = bestKey.split('_').map(Number);
-            room.regions[data.newRegionId] = { name: data.name, owner: cId, cells: 0, level: 1, cityX: fX, cityY: fY };
+            room.regions[data.newRegionId] = { name: data.name, owner: cId, cells: 0, level: 1, roadLevel: 0, cityX: fX, cityY: fY };
         }
 
         ownedTiles.forEach(key => {
@@ -175,17 +171,32 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- ДОБАВЛЕНО: УЛУЧШЕНИЕ ДОРОГ ---
+    socket.on('upgradeRoads', (regionId) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const reg = room.regions[regionId];
+        if (reg && reg.owner === cId && (reg.roadLevel || 0) < 10) {
+            const cost = ((reg.roadLevel || 0) + 1) * 3000;
+            if (room.countries[cId].dollars >= cost) { 
+                room.countries[cId].dollars -= cost; 
+                reg.roadLevel = (reg.roadLevel || 0) + 1; 
+                io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions }); 
+                io.to(roomId).emit('updateResources', room.countries); 
+            }
+        }
+    });
+
     socket.on('deployArmy', (data) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
         const reg = room.regions[data.regionId];
         
         if (reg && reg.owner === cId && room.countries[cId].military >= data.amount) {
-            // ПРОВЕРКА НА ОККУПАЦИЮ (Нельзя спавнить на свежезахваченной территории)
             let cityCell = room.territory[`${reg.cityX}_${reg.cityY}`];
             if (cityCell && cityCell.core !== cId) {
                 if (room.countries[cityCell.core] && room.countries[cityCell.core].cells > 0) {
-                    return; // Враг жив, территория оккупирована
+                    return; 
                 }
             }
 
@@ -354,14 +365,14 @@ setInterval(() => {
         armyIds.forEach(id => {
             const a = room.armies[id];
             
-            // --- УСКОРЕНИЕ ОТ ДОРОГ ---
+            // --- ТЕПЕРЬ СКОРОСТЬ ЗАВИСИТ ОТ НОВОЙ ПЕРЕМЕННОЙ roadLevel ---
             let speedMult = 1;
             const cellX = Math.floor(a.x/TILE_SIZE); const cellY = Math.floor(a.y/TILE_SIZE);
             const cellCenter = room.territory[`${cellX}_${cellY}`];
             if (cellCenter && room.regions[cellCenter.regionId]) {
                 const reg = room.regions[cellCenter.regionId];
                 if (reg.owner === a.owner) {
-                    speedMult = 1 + (reg.level * 0.07); // До +70% на 10 уровне
+                    speedMult = 1 + ((reg.roadLevel || 0) * 0.07); // До +70% к скорости, если это свои дороги
                 }
             }
 
@@ -395,7 +406,7 @@ setInterval(() => {
                                             deathChecks.add(tOldOwner);
                                         }
                                         room.territory[tKey].owner = a.owner;
-                                        if (!room.territory[tKey].core) room.territory[tKey].core = tOldOwner; // Сохраняем исконного владельца
+                                        if (!room.territory[tKey].core) room.territory[tKey].core = tOldOwner; 
                                         if (room.countries[a.owner]) room.countries[a.owner].cells++;
                                         room.batchedCellUpdates[tKey] = room.territory[tKey];
                                     }
@@ -418,7 +429,7 @@ setInterval(() => {
                             if (cell && cell.regionId && room.regions[cell.regionId]) room.regions[cell.regionId].cells--;
                             
                             const newRegId = `reg_${a.owner}_cap`;
-                            room.territory[cellKey] = { owner: a.owner, core: oldCore, regionId: newRegId }; // Захватываем, но Core остается вражеским
+                            room.territory[cellKey] = { owner: a.owner, core: oldCore, regionId: newRegId }; 
                             if (room.countries[a.owner]) room.countries[a.owner].cells++;
                             if (room.regions[newRegId]) room.regions[newRegId].cells++;
                             room.batchedCellUpdates[cellKey] = room.territory[cellKey];
@@ -522,7 +533,7 @@ setInterval(() => {
                 if (!edge && owners.size === 1 && !hasDefendingArmy) {
                     let winId = Array.from(owners)[0];
                     if (winId !== startOwner && winId !== 'neutral') { 
-                        let rId = `reg_${winId}_cap`; if (!room.regions[rId]) room.regions[rId] = { name: "Столица", owner: winId, cells: 0, level: 1 };
+                        let rId = `reg_${winId}_cap`; if (!room.regions[rId]) room.regions[rId] = { name: "Столица", owner: winId, cells: 0, level: 1, roadLevel: 0 };
                         comp.reverse().forEach(c => room.fillQ.push({...c, owner: winId, regId: rId})); 
                         if (startOwner) io.to(roomId).emit('newsEvent', `⚔️ Окружение! Войска ${room.countries[winId] ? room.countries[winId].name : 'врага'} замкнули котел!`);
                         break;
@@ -544,6 +555,7 @@ setInterval(() => {
             room.countries[id].cap = Math.floor(room.countries[id].population * 0.1);
             let main = 0; for (let a in room.armies) if (room.armies[a].owner === id) main += room.armies[a].count * 1; 
             let inc = 100 - main;
+            // ДОХОД ИДЕТ ОТ ЭКОНОМИКИ (level)
             for (let r in room.regions) if (room.regions[r].owner === id) inc += room.regions[r].cells * 1.5 * room.regions[r].level;
             room.countries[id].dollars += inc; room.countries[id].lastIncome = inc;
             if (room.countries[id].military < room.countries[id].cap) {
