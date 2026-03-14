@@ -5,7 +5,7 @@ const ctx = canvas.getContext('2d');
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = 250; 
+const KM_PER_TILE = 25; 
 
 canvas.width = WORLD_WIDTH; 
 canvas.height = WORLD_HEIGHT;
@@ -48,9 +48,17 @@ const keys = { w: false, a: false, s: false, d: false };
 window.addEventListener('keydown', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = true; if (key === 'a' || key === 'ф') keys.a = true; if (key === 's' || key === 'ы') keys.s = true; if (key === 'd' || key === 'в') keys.d = true; });
 window.addEventListener('keyup', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = false; if (key === 'a' || key === 'ф') keys.a = false; if (key === 's' || key === 'ы') keys.s = false; if (key === 'd' || key === 'в') keys.d = false; });
 
-let base64Flag = null; let edBase64Flag = null; 
+let base64Flag = null; let edBase64Flag = null; const flagCache = {}; 
+function getFlagImage(cId, base64Str) { 
+    if (!flagCache[cId] || flagCache[cId].dataset.src !== base64Str) { 
+        const img = new Image(); 
+        img.src = base64Str; 
+        img.dataset.src = base64Str;
+        flagCache[cId] = img; 
+    } 
+    return flagCache[cId]; 
+}
 
-// === УЛУЧШЕННАЯ ОБРАБОТКА ФЛАГОВ ИЗ ФАЙЛОВ ===
 function processFlag(file, isEd) { 
     if (file) { 
         const reader = new FileReader(); 
@@ -64,7 +72,6 @@ function processFlag(file, isEd) {
                 const processedBase64 = tempCanvas.toDataURL('image/png');
                 if(isEd) { edBase64Flag = processedBase64; }
                 else { base64Flag = processedBase64; }
-                console.log("Флаг успешно конвертирован и готов к отправке!");
             }; 
             img.src = ev.target.result; 
         }; 
@@ -97,9 +104,7 @@ document.getElementById('joinBtn')?.addEventListener('click', () => {
         const color = document.getElementById('countryColor').value;
         let finalFlag = base64Flag; 
         
-        // Надежный фоллбэк при создании страны
         if (!finalFlag || !finalFlag.startsWith('data:image')) { 
-            console.warn("Флаг не был выбран или не успел загрузиться. Генерируем цветовой флаг.");
             const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; 
             const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); 
             finalFlag = tCnv.toDataURL('image/png'); 
@@ -167,7 +172,6 @@ socket.on('syncArmies', (a) => {
     updateArmyPanel();
 });
 
-// === БРОНЕБОЙНОЕ ОБНОВЛЕНИЕ ИНТЕРФЕЙСА (ФИКС КРЕСТИКОВ) ===
 function updateUI() {
     if (myId && countries[myId]) {
         const country = countries[myId];
@@ -180,8 +184,6 @@ function updateUI() {
         
         if (flagEl) {
             let safeFlag = country.flag;
-            
-            // Если флага нет, он пустой, или это не картинка
             if (!safeFlag || typeof safeFlag !== 'string' || !safeFlag.startsWith('data:image')) {
                 const tCnv = document.createElement('canvas'); 
                 tCnv.width = 64; tCnv.height = 64; 
@@ -189,17 +191,14 @@ function updateUI() {
                 tCtx.fillStyle = country.color || '#555'; 
                 tCtx.fillRect(0, 0, 64, 64); 
                 safeFlag = tCnv.toDataURL('image/png');
-                countries[myId].flag = safeFlag; // Перезаписываем битый флаг в памяти
+                countries[myId].flag = safeFlag; 
             }
-            
-            // Жестко перезаписываем атрибут, только если он реально изменился
             if (flagEl.getAttribute('src') !== safeFlag) {
                 flagEl.setAttribute('src', safeFlag);
             }
         }
         
         isSpawned = country.isSpawned;
-        
         document.getElementById('myArea').innerText = (country.cells * KM_PER_TILE).toLocaleString();
         document.getElementById('myPop').innerText = Math.floor(country.population).toLocaleString();
         document.getElementById('myDollars').innerText = Math.floor(country.dollars).toLocaleString();
@@ -337,12 +336,14 @@ function drawMap() {
 
     ctx.beginPath(); ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; ctx.lineWidth = 1.5 / camera.zoom; ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
     for (let key in territory) {
-        const cell = territory[key]; const [cx, cy] = key.split('_').map(Number);
+        const cell = territory[key]; const [cx, cy] = splitAndNumber(key);
         const nRight = territory[`${cx+1}_${cy}`]; const nBottom = territory[`${cx}_${cy+1}`];
         if (nRight && nRight.owner === cell.owner && nRight.regionId !== cell.regionId) { let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
         if (nBottom && nBottom.owner === cell.owner && nBottom.regionId !== cell.regionId) { let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
     }
     ctx.stroke(); ctx.setLineDash([]); 
+
+    function splitAndNumber(str) { let i = str.indexOf('_'); return [Number(str.slice(0,i)), Number(str.slice(i+1))]; }
 
     for (const rId in regions) {
         const reg = regions[rId];
@@ -367,25 +368,37 @@ function drawMap() {
     }
 
     const rw = 26 / camera.zoom; const rh = 16 / camera.zoom;
+    
+    // --- ОТРИСОВКА АРМИЙ С КРАСИВЫМИ ФЛАГАМИ ---
     for(const id in visualArmies) {
         const army = visualArmies[id]; const owner = countries[army.owner]; if (!owner) continue;
 
         if (selectedArmies.includes(id)) { 
-            ctx.fillStyle = 'rgba(241, 196, 15, 0.5)'; ctx.fillRect(army.x - (rw/2) - 4/camera.zoom, army.y - (rh/2) - 4/camera.zoom, rw + 8/camera.zoom, rh + 8/camera.zoom);
+            ctx.fillStyle = 'rgba(241, 196, 15, 0.5)'; 
+            ctx.fillRect(army.x - (rw/2) - 4/camera.zoom, army.y - (rh/2) - 4/camera.zoom, rw + 8/camera.zoom, rh + 8/camera.zoom);
         }
 
-// Получаем картинку флага для армии
         const flagImg = getFlagImage(army.owner, owner.flag);
 
-        // Рисуем подложку (цвет страны)
+        // Подложка (на случай, если флаг не успел прогрузиться)
         ctx.fillStyle = owner.color; 
         ctx.fillRect(army.x - rw/2, army.y - rh/2, rw, rh);
 
-        // Рисуем сам флаг поверх подложки
-        if (flagImg.complete && flagImg.naturalWidth > 0) {
+        // Отрисовка самого флага
+        if (flagImg && flagImg.complete && flagImg.naturalWidth > 0) {
             ctx.drawImage(flagImg, army.x - rw/2, army.y - rh/2, rw, rh);
         }
 
+        // Рамка флага
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / camera.zoom; 
+        ctx.strokeRect(army.x - rw/2, army.y - rh/2, rw, rh);
+
+        // Текст с численностью войск
+        ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.strokeStyle = 'black'; ctx.lineWidth = 2 / camera.zoom; ctx.textAlign = 'center';
+        const countText = Math.floor(army.count).toString();
+        ctx.strokeText(countText, army.x, army.y + rh/2 + (12 / camera.zoom)); ctx.fillText(countText, army.x, army.y + rh/2 + (12 / camera.zoom));
+
+        // Значок скрещенных мечей (если армия в режиме авто-атаки)
         if (army.autoTarget) {
             ctx.fillStyle = '#f1c40f';
             ctx.font = `bold ${12 / camera.zoom}px Arial`;
