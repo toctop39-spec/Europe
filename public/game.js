@@ -393,6 +393,26 @@ canvas.addEventListener('mouseup', (e) => {
         isDrawingRegion = false; lassoPoints = []; document.getElementById('drawRegionBtn').innerText = "Оформить новый регион"; return;
     }
 
+    // --- ФУНКЦИЯ ДЛЯ РАБОТЫ РЕДАКТОРА (Исправление ошибки ReferenceError) ---
+function updateEditorList() {
+    const list = document.getElementById('edCountryList');
+    if (!list || !isEditorMode) return;
+    
+    list.innerHTML = '';
+    for (let cId in countries) {
+        const c = countries[cId];
+        list.innerHTML += `
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#151718; padding:8px; margin-bottom:5px; border:1px solid #333; border-radius: 2px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="width:14px; height:14px; background:${c.color}; border:1px solid #000; border-radius:2px;"></div>
+                    <span style="color:#ecf0f1; font-size:12px; font-weight:bold;">${c.name}</span>
+                </div>
+                <button onclick="edSwitchCountry('${cId}')" style="background:linear-gradient(180deg, #2980b9, #2471a3); color:#fff; border:1px solid #111; padding:4px 8px; cursor:pointer; font-size:10px; font-weight:bold; border-radius:2px; text-transform:uppercase;">Играть за них</button>
+            </div>
+        `;
+    }
+}
+
     if (e.button === 0 && isSelecting && !isSelectingAutoAttackTarget) {
         isSelecting = false; const world = getWorldCoords(e);
         const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x); const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
