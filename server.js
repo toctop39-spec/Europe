@@ -83,7 +83,6 @@ io.on('connection', (socket) => {
         for (let k in room.countries) { if (room.countries[k].socketId === socket.id) room.countries[k].socketId = null; }
         let cId = data.isNew ? `c_${Math.random().toString(36).substr(2, 9)}` : data.countryId;
         if (data.isNew) {
-            // ДОБАВЛЕНА ПЕРЕМЕННАЯ СЧАСТЬЯ ПРИ СПАВНЕ
             room.countries[cId] = { id: cId, name: data.name, flag: data.flag, color: data.color, socketId: socket.id, cells: 0, dollars: 10000, population: 100000, military: 10000, cap: 10000, isSpawned: false, online: true, happiness: 50 };
             io.to(roomId).emit('newsEvent', `🌍 Новая нация "${data.name}" появилась на карте!`);
         } else if (room.countries[cId]) { room.countries[cId].online = true; room.countries[cId].socketId = socket.id; }
@@ -106,7 +105,6 @@ io.on('connection', (socket) => {
 
         country.isSpawned = true;
         const startRegionId = `reg_${cId}_cap`;
-        // ДОБАВЛЕНЫ НОВЫЕ ПЕРЕМЕННЫЕ УРОВНЕЙ В РЕГИОН
         room.regions[startRegionId] = { name: "Столичный округ", owner: cId, cells: 0, level: 1, roadLevel: 0, prodLevel: 0, bizLevel: 0, recLevel: 0, cityX: data.x, cityY: data.y };
 
         for(let dx = -6; dx <= 6; dx++) {
@@ -158,18 +156,19 @@ io.on('connection', (socket) => {
         if (reg && reg.owner === cId && data.newName) { reg.name = data.newName.substring(0, 20); io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions }); }
     });
 
-    // --- ФУНКЦИИ ПРОКАЧКИ 5 ВЕТОК ---
-    function doUpgrade(socket, regionId, statName, maxLvl, costFunc) {
+    // --- НОВАЯ СИСТЕМА ДИНАМИЧЕСКИХ ЦЕН (УЧИТЫВАЕТ РАЗМЕР РЕГИОНА И УРОВЕНЬ) ---
+    function doUpgrade(socket, regionId, statName, maxLvl, baseCost, cellMult) {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
         const reg = room.regions[regionId];
         if (reg && reg.owner === cId) {
             let currentLvl = reg[statName] || (statName==='level'?1:0);
             if (currentLvl < maxLvl) {
-                const cost = costFunc(currentLvl);
+                const targetLvl = currentLvl + 1;
+                const cost = (baseCost * targetLvl) + ((reg.cells || 0) * cellMult * targetLvl);
                 if (room.countries[cId].dollars >= cost) {
                     room.countries[cId].dollars -= cost;
-                    reg[statName] = currentLvl + 1;
+                    reg[statName] = targetLvl;
                     io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions });
                     io.to(roomId).emit('updateResources', room.countries);
                 }
@@ -177,11 +176,11 @@ io.on('connection', (socket) => {
         }
     }
 
-    socket.on('upgradeInfra', (rId) => doUpgrade(socket, rId, 'level', 10, () => 5000));
-    socket.on('upgradeRoads', (rId) => doUpgrade(socket, rId, 'roadLevel', 10, () => 3000));
-    socket.on('upgradeProd',  (rId) => doUpgrade(socket, rId, 'prodLevel', 10, () => 4000));
-    socket.on('upgradeBiz',   (rId) => doUpgrade(socket, rId, 'bizLevel', 10, () => 6000));
-    socket.on('upgradeRec',   (rId) => doUpgrade(socket, rId, 'recLevel', 10, () => 3000));
+    socket.on('upgradeInfra', (rId) => doUpgrade(socket, rId, 'level', 10, 5000, 10));
+    socket.on('upgradeRoads', (rId) => doUpgrade(socket, rId, 'roadLevel', 10, 3000, 5));
+    socket.on('upgradeProd',  (rId) => doUpgrade(socket, rId, 'prodLevel', 10, 4000, 8));
+    socket.on('upgradeBiz',   (rId) => doUpgrade(socket, rId, 'bizLevel', 10, 6000, 12));
+    socket.on('upgradeRec',   (rId) => doUpgrade(socket, rId, 'recLevel', 10, 3000, 5));
 
     socket.on('deployArmy', (data) => {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
@@ -240,6 +239,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete playerToRoom[socket.id]; });
 });
 
+// --- ПЛАВНЫЙ ЗАХВАТ: Пинг отправки кусков карты ускорен с 200мс до 40мс ---
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
@@ -248,7 +248,7 @@ setInterval(() => {
             room.batchedCellUpdates = {}; 
         }
     }
-}, 200);
+}, 40);
 
 setInterval(() => {
     for (let roomId in rooms) {
@@ -325,7 +325,8 @@ setInterval(() => {
             const cellCenter = room.territory[`${cellX}_${cellY}`];
             if (cellCenter && room.regions[cellCenter.regionId]) {
                 const reg = room.regions[cellCenter.regionId];
-                if (reg.owner === a.owner) speedMult = 1 + ((reg.roadLevel || 0) * 0.07); 
+                // ДОРОГИ ДАЮТ +10% ЗА КАЖДЫЙ УРОВЕНЬ
+                if (reg.owner === a.owner) speedMult = 1 + ((reg.roadLevel || 0) * 0.10); 
             }
 
             if (!a.targets.length && a.targetX !== null) {
@@ -473,7 +474,6 @@ setInterval(() => {
     }
 }, 50);
 
-// --- ГЛАВНЫЙ ЦИКЛ ЭКОНОМИКИ (Улучшенный) ---
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId]; let changed = false;
@@ -481,7 +481,6 @@ setInterval(() => {
         for (let id in room.countries) {
             if (!room.countries[id].isSpawned) continue;
             
-            // 1. Считаем глобальные уровни по стране
             let totalRec = 0; let totalProd = 0; let regCount = 0;
             let bizIncome = 0; let infraIncome = 0;
             for (let r in room.regions) {
@@ -489,34 +488,30 @@ setInterval(() => {
                     regCount++;
                     totalRec += (room.regions[r].recLevel || 0);
                     totalProd += (room.regions[r].prodLevel || 0);
-                    bizIncome += (room.regions[r].bizLevel || 0) * 150; // Бизнес дает плоские доллары
-                    infraIncome += room.regions[r].cells * 1.5 * (room.regions[r].level || 1);
+                    // БОЛЬШИЕ РЕГИОНЫ ДАЮТ МНОЖИТЕЛЬ ДОХОДА!
+                    bizIncome += (room.regions[r].bizLevel || 0) * 100 + (room.regions[r].cells * (room.regions[r].bizLevel || 0) * 1.5);
+                    infraIncome += room.regions[r].cells * 2.0 * (room.regions[r].level || 1);
                 }
             }
             
-            // 2. Счастье (От зон отдыха). Базовое 40%. Каждая зона на все регионы дает процент. Макс 100%.
             let happiness = 40;
             if (regCount > 0) happiness = Math.min(100, 40 + (totalRec / regCount) * 6);
             room.countries[id].happiness = happiness;
 
-            // 3. Содержание армии (Зависит от заводов)
             let main = 0; 
             for (let a in room.armies) if (room.armies[a].owner === id) main += room.armies[a].count * 1; 
             
-            let upkeepReduction = Math.min(0.8, totalProd * 0.02); // -2% содержания за каждый завод в стране
+            let upkeepReduction = Math.min(0.8, totalProd * 0.02); 
             let armyUpkeep = main * (1 - upkeepReduction);
 
-            // 4. Расчет итогового дохода
-            let inc = 100 - armyUpkeep; // Базовые 100$ минус армия
+            let inc = 100 - armyUpkeep; 
             inc += infraIncome + bizIncome;
             
-            // Счастье умножает доход (при 100% доход удваивается, при 40% - штраф)
             inc = inc * (happiness / 50); 
             
             room.countries[id].dollars += inc; 
             room.countries[id].lastIncome = inc;
 
-            // 5. Рост населения и лимит армии
             const popGrowth = Math.floor(room.countries[id].cells * 0.5 * (happiness / 50)); 
             room.countries[id].population += popGrowth;
             room.countries[id].cap = Math.floor(room.countries[id].population * 0.1);
