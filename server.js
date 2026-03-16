@@ -254,7 +254,6 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete playerToRoom[socket.id]; });
 });
 
-// ПЛАВНАЯ КАРТА: Пинг отправки тайлов ускорен до 40мс
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
@@ -418,6 +417,7 @@ setInterval(() => {
 
 const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
 
+// --- ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ СИСТЕМА КОТЛОВ: РАБОТАЕТ ВЕЗДЕ БЕЗ ЛАГОВ ---
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
@@ -445,40 +445,56 @@ setInterval(() => {
         while (checked < 3000) {
             let idx = room.sY * gridW + room.sX;
             if (room.vstd[idx] === 0) {
-                const startOwner = room.territory[`${room.sX}_${room.sY}`] ? room.territory[`${room.sX}_${room.sY}`].owner : null;
+                const startKey = `${room.sX}_${room.sY}`;
+                const startOwner = room.territory[startKey] ? room.territory[startKey].owner : null;
                 
-                // ИСПРАВЛЕНИЕ ЛАГОВ: Больше не сканируем пустую карту!
-                if (startOwner === null) {
-                    room.vstd[idx] = 1; room.sX++; checked++; 
-                    if (room.sX >= gridW) { room.sX = 0; room.sY++; if (room.sY >= gridH) { room.sY = 0; room.mapChangedForCauldrons = false; room.vstd.fill(0); break; } }
-                    continue;
-                }
-
-                let h = 0, t = 0, edge = false, owners = new Set(), comp = []; let hasDefendingArmy = false;
-                room.qX[t] = room.sX; room.qY[t] = room.sY; t++; room.vstd[idx] = 1;
+                let h = 0, t = 0, edge = false;
+                let owners = new Set();
+                let comp = []; 
+                let hasDefendingArmy = false;
+                
+                room.qX[t] = room.sX; room.qY[t] = room.sY; t++; 
+                room.vstd[idx] = 1;
                 
                 while(h < t) {
-                    let cx = room.qX[h]; let cy = room.qY[h]; h++; comp.push({x: cx, y: cy});
-                    if (comp.length > 500) edge = true; 
-                    if (cx <= 0 || cx >= gridW-1 || cy <= 0 || cy >= gridH-1) edge = true;
+                    let cx = room.qX[h]; let cy = room.qY[h]; h++; 
+                    if (!edge) comp.push({x: cx, y: cy});
+                    
+                    // БЛОКИРОВКА ПАМЯТИ: Если область больше 400 клеток (например, огромная пустота),
+                    // мы тут же удаляем её из памяти, чтобы избежать зависаний сервера.
+                    if (h > 400) { edge = true; comp.length = 0; }
+                    if (cx <= 0 || cx >= gridW-1 || cy <= 0 || cy >= gridH-1) { edge = true; comp.length = 0; }
                     if (startOwner !== null && armyLocs[`${cx}_${cy}`] && armyLocs[`${cx}_${cy}`].includes(startOwner)) hasDefendingArmy = true;
                     
-                    [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx, dy]) => {
-                        let nx = cx + dx, ny = cy + dy;
+                    let neighbors = [ [cx+1, cy], [cx-1, cy], [cx, cy+1], [cx, cy-1] ];
+                    for (let i=0; i<4; i++) {
+                        let nx = neighbors[i][0]; let ny = neighbors[i][1];
                         if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
-                            let nKey = `${nx}_${ny}`; let nOwn = room.territory[nKey] ? room.territory[nKey].owner : null;
-                            if (nOwn === startOwner) { let nIdx = ny * gridW + nx; if (room.vstd[nIdx] === 0) { room.vstd[nIdx] = 1; room.qX[t] = nx; room.qY[t] = ny; t++; }
-                            } else { owners.add(nOwn === null ? 'neutral' : nOwn); }
+                            let nKey = `${nx}_${ny}`;
+                            let nOwn = room.territory[nKey] ? room.territory[nKey].owner : null;
+                            if (nOwn === startOwner) {
+                                let nIdx = ny * gridW + nx;
+                                if (room.vstd[nIdx] === 0) {
+                                    room.vstd[nIdx] = 1;
+                                    room.qX[t] = nx; room.qY[t] = ny; t++;
+                                }
+                            } else {
+                                owners.add(nOwn === null ? 'neutral' : nOwn);
+                            }
                         }
-                    });
+                    }
                 }
+                
                 if (!edge && owners.size === 1 && !hasDefendingArmy) {
                     let winId = Array.from(owners)[0];
                     if (winId !== startOwner && winId !== 'neutral') { 
-                        let rId = `reg_${winId}_cap`; if (!room.regions[rId]) room.regions[rId] = { name: "Столица", owner: winId, cells: 0, level: 1, roadLevel: 0, prodLevel: 0, bizLevel: 0, recLevel: 0 };
-                        comp.reverse().forEach(c => room.fillQ.push({...c, owner: winId, regId: rId})); 
+                        let rId = `reg_${winId}_cap`; 
+                        if (!room.regions[rId]) room.regions[rId] = { name: "Оккупация", owner: winId, cells: 0, level: 1, roadLevel: 0, prodLevel: 0, bizLevel: 0, recLevel: 0 };
+                        
+                        for (let i = comp.length - 1; i >= 0; i--) {
+                            room.fillQ.push({x: comp[i].x, y: comp[i].y, owner: winId, regId: rId});
+                        }
                         if (startOwner) io.to(roomId).emit('newsEvent', `⚔️ Окружение! Войска ${room.countries[winId] ? room.countries[winId].name : 'врага'} замкнули котел!`);
-                        break;
                     }
                 }
             }
