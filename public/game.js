@@ -5,7 +5,7 @@ const ctx = canvas.getContext('2d');
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = 25; 
+const KM_PER_TILE = 250; 
 
 canvas.width = WORLD_WIDTH; 
 canvas.height = WORLD_HEIGHT;
@@ -64,8 +64,31 @@ function processFlag(file, isEd) {
 document.getElementById('countryFlagFile')?.addEventListener('change', (e) => processFlag(e.target.files[0], false));
 document.getElementById('edCountryFlagFile')?.addEventListener('change', (e) => processFlag(e.target.files[0], true));
 
-window.createRoom = function() { socket.emit('createRoom', { presetName: document.getElementById('presetNameInput').value }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = res.roomId; document.getElementById('myRoomCode').innerText = res.roomId; } }); }
-window.joinRoom = function() { const code = document.getElementById('roomCodeInput').value.toUpperCase(); socket.emit('joinRoom', code, (res) => { if (res.success) { currentRoomId = code; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = code; document.getElementById('myRoomCode').innerText = code; } else { alert(res.msg || "Комната не найдена!"); } }); }
+window.createRoom = function() { 
+    const isPub = document.getElementById('isPublicServer').checked;
+    socket.emit('createRoom', { presetName: document.getElementById('presetNameInput').value, isPublic: isPub }, (res) => { 
+        if (res.success) { currentRoomId = res.roomId; document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = res.roomId; document.getElementById('myRoomCode').innerText = res.roomId; } 
+    }); 
+}
+
+window.joinRoom = function() { 
+    const code = document.getElementById('roomCodeInput').value.toUpperCase(); 
+    socket.emit('joinRoom', code, (res) => { 
+        if (res.success) { currentRoomId = code; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = code; document.getElementById('myRoomCode').innerText = code; } else { alert(res.msg || "Комната не найдена!"); } 
+    }); 
+}
+
+window.quickPlay = function() {
+    socket.emit('quickPlay', {}, (res) => {
+        if (res.success) {
+            currentRoomId = res.roomId;
+            document.getElementById('roomPanel').style.display = 'none'; 
+            document.getElementById('countryPanel').style.display = 'block'; 
+            document.getElementById('displaySetupRoomCode').innerText = res.roomId; 
+            document.getElementById('myRoomCode').innerText = res.roomId;
+        }
+    });
+}
 
 socket.on('initLobby', (cList) => { 
     countries = cList; if (isPlaying) return; 
@@ -91,7 +114,7 @@ document.getElementById('joinBtn')?.addEventListener('click', () => {
 
 socket.on('joinSuccess', (cId) => { myId = cId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('sideMenu').style.display = 'block'; isPlaying = true; updateEditorList(); if (countries[myId]) updateUI(); });
 
-window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '' }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; updateEditorList(); } }); }
+window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '', isPublic: false }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; updateEditorList(); } }); }
 window.edCreateCountry = function() { const name = document.getElementById('edCountryName').value || 'Новая Страна'; const color = document.getElementById('edCountryColor').value; let finalFlag = edBase64Flag; if (!finalFlag) { const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); finalFlag = tCnv.toDataURL(); } socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag }); edBase64Flag = null; const fi = document.getElementById('edCountryFlagFile'); if(fi) fi.value = ""; }
 window.edSwitchCountry = function(cId) { socket.emit('switchCountry', cId); }
 window.edSaveAndExit = function() { const presetName = prompt("Введите название заготовки:"); if (presetName && presetName.trim() !== "") { socket.emit('savePreset', presetName.trim()); } }
@@ -179,7 +202,6 @@ function updateRegionPanel() {
         if(renBtn) renBtn.style.display = 'inline-block'; 
         upgList.style.display = 'flex';
         
-        // ФУНКЦИЯ РАСЧЕТА ДИНАМИЧЕСКОЙ СТОИМОСТИ (Уровень + Размер региона)
         const cells = reg.cells || 0;
         const calcCost = (base, mult, lvl) => (base * (lvl + 1)) + (cells * mult * (lvl + 1));
         
