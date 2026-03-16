@@ -5,7 +5,7 @@ const ctx = canvas.getContext('2d');
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = 250; 
+const KM_PER_TILE = 25; 
 
 canvas.width = WORLD_WIDTH; 
 canvas.height = WORLD_HEIGHT;
