@@ -18,9 +18,10 @@ const TILE_SIZE = 5;
 const ENGAGE_RADIUS = 10; 
 const COLLISION_RADIUS = 2; 
 
-function createRoom(roomId, presetData = null) {
+function createRoom(roomId, presetData = null, isPublic = true) {
     let room = {
         id: roomId,
+        isPublic: isPublic,
         countries: {}, territory: {}, armies: {}, regions: {},
         pendingDeployments: [], batchedCellUpdates: {},
         mapChangedForCauldrons: false, fillQ: [],
@@ -40,7 +41,7 @@ function createRoom(roomId, presetData = null) {
     rooms[roomId] = room; return room;
 }
 
-createRoom('MAIN');
+createRoom('MAIN', null, true);
 
 function checkCountryDeath(room, cId, roomId) {
     if (cId && room.countries[cId] && room.countries[cId].cells <= 0) {
@@ -64,10 +65,25 @@ io.on('connection', (socket) => {
 
     socket.on('createRoom', (data, callback) => {
         const newCode = Math.random().toString(36).substr(2, 5).toUpperCase();
-        createRoom(newCode, data.presetName ? presets[data.presetName] : null);
+        createRoom(newCode, data.presetName ? presets[data.presetName] : null, data.isPublic !== false);
         socket.join(newCode); playerToRoom[socket.id] = newCode; callback({ success: true, roomId: newCode });
         socket.emit('initLobby', rooms[newCode].countries);
         socket.emit('initData', { countries: rooms[newCode].countries, territory: rooms[newCode].territory, armies: rooms[newCode].armies, regions: rooms[newCode].regions });
+    });
+
+    socket.on('quickPlay', (data, callback) => {
+        let targetRoomId = null;
+        for (let rId in rooms) {
+            if (rooms[rId].isPublic) { targetRoomId = rId; break; }
+        }
+        if (!targetRoomId) {
+            targetRoomId = Math.random().toString(36).substr(2, 5).toUpperCase();
+            createRoom(targetRoomId, null, true);
+        }
+        socket.join(targetRoomId); playerToRoom[socket.id] = targetRoomId; 
+        callback({ success: true, roomId: targetRoomId });
+        socket.emit('initLobby', rooms[targetRoomId].countries);
+        socket.emit('initData', { countries: rooms[targetRoomId].countries, territory: rooms[targetRoomId].territory, armies: rooms[targetRoomId].armies, regions: rooms[targetRoomId].regions });
     });
 
     socket.on('savePreset', (presetName) => {
@@ -156,7 +172,6 @@ io.on('connection', (socket) => {
         if (reg && reg.owner === cId && data.newName) { reg.name = data.newName.substring(0, 20); io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions }); }
     });
 
-    // --- НОВАЯ СИСТЕМА ДИНАМИЧЕСКИХ ЦЕН (УЧИТЫВАЕТ РАЗМЕР РЕГИОНА И УРОВЕНЬ) ---
     function doUpgrade(socket, regionId, statName, maxLvl, baseCost, cellMult) {
         const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
         const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
@@ -239,7 +254,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => { delete playerToRoom[socket.id]; });
 });
 
-// --- ПЛАВНЫЙ ЗАХВАТ: Пинг отправки кусков карты ускорен с 200мс до 40мс ---
+// ПЛАВНАЯ КАРТА: Пинг отправки тайлов ускорен до 40мс
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
@@ -325,7 +340,6 @@ setInterval(() => {
             const cellCenter = room.territory[`${cellX}_${cellY}`];
             if (cellCenter && room.regions[cellCenter.regionId]) {
                 const reg = room.regions[cellCenter.regionId];
-                // ДОРОГИ ДАЮТ +10% ЗА КАЖДЫЙ УРОВЕНЬ
                 if (reg.owner === a.owner) speedMult = 1 + ((reg.roadLevel || 0) * 0.10); 
             }
 
@@ -427,14 +441,14 @@ setInterval(() => {
         if (!room.mapChangedForCauldrons) continue;
         let armyLocs = {}; for(let id in room.armies) { let k = `${Math.floor(room.armies[id].x/TILE_SIZE)}_${Math.floor(room.armies[id].y/TILE_SIZE)}`; if(!armyLocs[k]) armyLocs[k] = []; armyLocs[k].push(room.armies[id].owner); }
         
-        let checked = 0; let totalOwnedCells = 0;
-        for (let c in room.countries) { if(room.countries[c].isSpawned) totalOwnedCells += room.countries[c].cells; }
-
+        let checked = 0;
         while (checked < 3000) {
             let idx = room.sY * gridW + room.sX;
             if (room.vstd[idx] === 0) {
                 const startOwner = room.territory[`${room.sX}_${room.sY}`] ? room.territory[`${room.sX}_${room.sY}`].owner : null;
-                if (startOwner === null && totalOwnedCells < 40) {
+                
+                // ИСПРАВЛЕНИЕ ЛАГОВ: Больше не сканируем пустую карту!
+                if (startOwner === null) {
                     room.vstd[idx] = 1; room.sX++; checked++; 
                     if (room.sX >= gridW) { room.sX = 0; room.sY++; if (room.sY >= gridH) { room.sY = 0; room.mapChangedForCauldrons = false; room.vstd.fill(0); break; } }
                     continue;
@@ -488,7 +502,6 @@ setInterval(() => {
                     regCount++;
                     totalRec += (room.regions[r].recLevel || 0);
                     totalProd += (room.regions[r].prodLevel || 0);
-                    // БОЛЬШИЕ РЕГИОНЫ ДАЮТ МНОЖИТЕЛЬ ДОХОДА!
                     bizIncome += (room.regions[r].bizLevel || 0) * 100 + (room.regions[r].cells * (room.regions[r].bizLevel || 0) * 1.5);
                     infraIncome += room.regions[r].cells * 2.0 * (room.regions[r].level || 1);
                 }
