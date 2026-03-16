@@ -56,6 +56,9 @@ function checkCountryDeath(room, cId, roomId) {
 }
 
 io.on('connection', (socket) => {
+    // Отправляем счетчик онлайна при подключении (+100 для массовки)
+    io.emit('onlineCount', io.engine.clientsCount + 100);
+
     socket.on('joinRoom', (roomId, callback) => {
         if (!rooms[roomId]) return callback({ success: false, msg: "Комната не найдена" });
         socket.join(roomId); playerToRoom[socket.id] = roomId; callback({ success: true });
@@ -72,14 +75,32 @@ io.on('connection', (socket) => {
     });
 
     socket.on('quickPlay', (data, callback) => {
-        let targetRoomId = null;
+        let bestRoomId = null;
+        let maxPlayers = -1;
+
+        // Ищем публичный сервер с самым большим количеством живых игроков
         for (let rId in rooms) {
-            if (rooms[rId].isPublic) { targetRoomId = rId; break; }
+            if (rooms[rId].isPublic) {
+                let currentPlayers = 0;
+                for (let cId in rooms[rId].countries) {
+                    if (rooms[rId].countries[cId].online) {
+                        currentPlayers++;
+                    }
+                }
+                if (currentPlayers > maxPlayers) {
+                    maxPlayers = currentPlayers;
+                    bestRoomId = rId;
+                }
+            }
         }
+
+        let targetRoomId = bestRoomId;
+        // Если вообще нет подходящих публичных серверов — создаем новый
         if (!targetRoomId) {
             targetRoomId = Math.random().toString(36).substr(2, 5).toUpperCase();
             createRoom(targetRoomId, null, true);
         }
+
         socket.join(targetRoomId); playerToRoom[socket.id] = targetRoomId; 
         callback({ success: true, roomId: targetRoomId });
         socket.emit('initLobby', rooms[targetRoomId].countries);
@@ -251,7 +272,12 @@ io.on('connection', (socket) => {
             }
         });
     });
-    socket.on('disconnect', () => { delete playerToRoom[socket.id]; });
+
+    socket.on('disconnect', () => { 
+        delete playerToRoom[socket.id]; 
+        // Обновляем счетчик при выходе
+        io.emit('onlineCount', io.engine.clientsCount + 100);
+    });
 });
 
 setInterval(() => {
@@ -417,7 +443,6 @@ setInterval(() => {
 
 const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
 
-// --- ПОЛНОСТЬЮ ПЕРЕПИСАННАЯ СИСТЕМА КОТЛОВ: РАБОТАЕТ ВЕЗДЕ БЕЗ ЛАГОВ ---
 setInterval(() => {
     for (let roomId in rooms) {
         let room = rooms[roomId];
@@ -460,8 +485,6 @@ setInterval(() => {
                     let cx = room.qX[h]; let cy = room.qY[h]; h++; 
                     if (!edge) comp.push({x: cx, y: cy});
                     
-                    // БЛОКИРОВКА ПАМЯТИ: Если область больше 400 клеток (например, огромная пустота),
-                    // мы тут же удаляем её из памяти, чтобы избежать зависаний сервера.
                     if (h > 400) { edge = true; comp.length = 0; }
                     if (cx <= 0 || cx >= gridW-1 || cy <= 0 || cy >= gridH-1) { edge = true; comp.length = 0; }
                     if (startOwner !== null && armyLocs[`${cx}_${cy}`] && armyLocs[`${cx}_${cy}`].includes(startOwner)) hasDefendingArmy = true;
