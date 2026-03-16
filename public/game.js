@@ -1,465 +1,563 @@
-const socket = io();
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+app.use(express.static('public'));
+
+const rooms = {}; 
+const presets = {}; 
+let playerToRoom = {}; 
 
 const WORLD_WIDTH = 1920; 
 const WORLD_HEIGHT = 1080;
 const TILE_SIZE = 5; 
-const KM_PER_TILE = 25; 
 
-canvas.width = WORLD_WIDTH; 
-canvas.height = WORLD_HEIGHT;
+const ENGAGE_RADIUS = 10; 
+const COLLISION_RADIUS = 2; 
 
-let territory = {}; let countries = {}; let armies = {}; let regions = {};
-let myId = null; let currentRoomId = null; let isPlaying = false; let isSpawned = false;
-let isEditorMode = false;
-
-let visualArmies = {}; let camera = { x: 0, y: 0, zoom: 1 };
-let isPanning = false; let lastMouse = {x: 0, y: 0};
-let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
-let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
-let isSelectingAutoAttackTarget = false;
-let hoveredRegionId = null;
-
-const sysMsg = document.getElementById('systemMsg');
-function showMsg(text) { 
-    if(sysMsg) { sysMsg.innerText = text; setTimeout(() => sysMsg.innerText = "ЛКМ - выбор армий/регионов. ПКМ - марш.", 3000); } 
+function createRoom(roomId, presetData = null, isPublic = true) {
+    let room = {
+        id: roomId,
+        isPublic: isPublic,
+        countries: {}, territory: {}, armies: {}, regions: {},
+        pendingDeployments: [], batchedCellUpdates: {},
+        mapChangedForCauldrons: false, fillQ: [],
+        sX: 0, sY: 0,
+        vstd: new Uint8Array((WORLD_WIDTH / TILE_SIZE) * (WORLD_HEIGHT / TILE_SIZE)),
+        qX: new Int32Array((WORLD_WIDTH / TILE_SIZE) * (WORLD_HEIGHT / TILE_SIZE)),
+        qY: new Int32Array((WORLD_WIDTH / TILE_SIZE) * (WORLD_HEIGHT / TILE_SIZE))
+    };
+    if (presetData) {
+        room.countries = JSON.parse(JSON.stringify(presetData.countries));
+        room.territory = JSON.parse(JSON.stringify(presetData.territory));
+        room.regions = JSON.parse(JSON.stringify(presetData.regions));
+        for(let k in room.territory) {
+            if (!room.territory[k].core) room.territory[k].core = room.territory[k].owner;
+        }
+    }
+    rooms[roomId] = room; return room;
 }
 
-socket.on('newsEvent', (text) => {
-    const box = document.getElementById('newsBox');
-    if(box) { box.innerText = text; box.style.opacity = 1; setTimeout(() => box.style.opacity = 0, 4000); }
-});
+createRoom('MAIN', null, true);
 
-const bgMap = new Image(); bgMap.src = 'Map.png'; 
-let loopStarted = false;
-function startGame() { if (!loopStarted) { loopStarted = true; requestAnimationFrame(gameLoop); } }
-bgMap.onload = startGame; bgMap.onerror = () => { startGame(); }; setTimeout(startGame, 1000); 
-
-const keys = { w: false, a: false, s: false, d: false };
-window.addEventListener('keydown', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = true; if (key === 'a' || key === 'ф') keys.a = true; if (key === 's' || key === 'ы') keys.s = true; if (key === 'd' || key === 'в') keys.d = true; });
-window.addEventListener('keyup', (e) => { if (!e.key) return; let key = e.key.toLowerCase(); if (key === 'w' || key === 'ц') keys.w = false; if (key === 'a' || key === 'ф') keys.a = false; if (key === 's' || key === 'ы') keys.s = false; if (key === 'd' || key === 'в') keys.d = false; });
-
-let base64Flag = null; let edBase64Flag = null; const flagCache = {}; 
-function getFlagImage(cId, base64Str) { 
-    if (!flagCache[cId] || flagCache[cId].dataset.src !== base64Str) { 
-        const img = new Image(); img.src = base64Str; img.dataset.src = base64Str; flagCache[cId] = img; 
-    } return flagCache[cId]; 
+function checkCountryDeath(room, cId, roomId) {
+    if (cId && room.countries[cId] && room.countries[cId].cells <= 0) {
+        for (let k in room.territory) {
+            if (room.territory[k].core === cId) {
+                room.territory[k].core = room.territory[k].owner; 
+                room.batchedCellUpdates[k] = room.territory[k];
+            }
+        }
+        io.to(roomId).emit('newsEvent', `🏳️ ${room.countries[cId].name} капитулировала! Все земли аннексированы.`);
+    }
 }
 
-function processFlag(file, isEd) { 
-    if (file) { 
-        const reader = new FileReader(); 
-        reader.onload = (ev) => { 
-            const img = new Image(); 
-            img.onload = () => { 
-                const tempCanvas = document.createElement('canvas'); tempCanvas.width = 64; tempCanvas.height = 64; 
-                const tCtx = tempCanvas.getContext('2d'); tCtx.drawImage(img, 0, 0, 64, 64); 
-                const processedBase64 = tempCanvas.toDataURL('image/png');
-                if(isEd) edBase64Flag = processedBase64; else base64Flag = processedBase64;
-            }; img.src = ev.target.result; 
-        }; reader.readAsDataURL(file); 
-    } 
-}
-document.getElementById('countryFlagFile')?.addEventListener('change', (e) => processFlag(e.target.files[0], false));
-document.getElementById('edCountryFlagFile')?.addEventListener('change', (e) => processFlag(e.target.files[0], true));
+io.on('connection', (socket) => {
+    // --- ОТПРАВЛЯЕМ СЧЕТЧИК ОНЛАЙНА ПРИ ПОДКЛЮЧЕНИИ ---
+    io.emit('onlineCount', io.engine.clientsCount + 100);
 
-window.createRoom = function() { 
-    const isPub = document.getElementById('isPublicServer').checked;
-    socket.emit('createRoom', { presetName: document.getElementById('presetNameInput').value, isPublic: isPub }, (res) => { 
-        if (res.success) { currentRoomId = res.roomId; document.getElementById('createRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = res.roomId; document.getElementById('myRoomCode').innerText = res.roomId; } 
-    }); 
-}
+    socket.on('joinRoom', (roomId, callback) => {
+        if (!rooms[roomId]) return callback({ success: false, msg: "Комната не найдена" });
+        socket.join(roomId); playerToRoom[socket.id] = roomId; callback({ success: true });
+        socket.emit('initLobby', rooms[roomId].countries);
+        socket.emit('initData', { countries: rooms[roomId].countries, territory: rooms[roomId].territory, armies: rooms[roomId].armies, regions: rooms[roomId].regions });
+    });
 
-window.joinRoom = function() { 
-    const code = document.getElementById('roomCodeInput').value.toUpperCase(); 
-    socket.emit('joinRoom', code, (res) => { 
-        if (res.success) { currentRoomId = code; document.getElementById('joinRoomPanel').style.display = 'none'; document.getElementById('countryPanel').style.display = 'block'; document.getElementById('displaySetupRoomCode').innerText = code; document.getElementById('myRoomCode').innerText = code; } else { alert(res.msg || "Комната не найдена!"); } 
-    }); 
-}
+    socket.on('createRoom', (data, callback) => {
+        const newCode = Math.random().toString(36).substr(2, 5).toUpperCase();
+        createRoom(newCode, data.presetName ? presets[data.presetName] : null, data.isPublic !== false);
+        socket.join(newCode); playerToRoom[socket.id] = newCode; callback({ success: true, roomId: newCode });
+        socket.emit('initLobby', rooms[newCode].countries);
+        socket.emit('initData', { countries: rooms[newCode].countries, territory: rooms[newCode].territory, armies: rooms[newCode].armies, regions: rooms[newCode].regions });
+    });
 
-window.quickPlay = function() {
-    socket.emit('quickPlay', {}, (res) => {
-        if (res.success) {
-            currentRoomId = res.roomId;
-            document.getElementById('roomPanel').style.display = 'none'; 
-            document.getElementById('countryPanel').style.display = 'block'; 
-            document.getElementById('displaySetupRoomCode').innerText = res.roomId; 
-            document.getElementById('myRoomCode').innerText = res.roomId;
+    socket.on('quickPlay', (data, callback) => {
+        let targetRoomId = null;
+        for (let rId in rooms) {
+            if (rooms[rId].isPublic) { targetRoomId = rId; break; }
+        }
+        if (!targetRoomId) {
+            targetRoomId = Math.random().toString(36).substr(2, 5).toUpperCase();
+            createRoom(targetRoomId, null, true);
+        }
+        socket.join(targetRoomId); playerToRoom[socket.id] = targetRoomId; 
+        callback({ success: true, roomId: targetRoomId });
+        socket.emit('initLobby', rooms[targetRoomId].countries);
+        socket.emit('initData', { countries: rooms[targetRoomId].countries, territory: rooms[targetRoomId].territory, armies: rooms[targetRoomId].armies, regions: rooms[targetRoomId].regions });
+    });
+
+    socket.on('savePreset', (presetName) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId || !rooms[roomId]) return;
+        let savedCountries = JSON.parse(JSON.stringify(rooms[roomId].countries));
+        for(let k in savedCountries) { savedCountries[k].socketId = null; savedCountries[k].online = false; }
+        presets[presetName] = { countries: savedCountries, territory: JSON.parse(JSON.stringify(rooms[roomId].territory)), regions: JSON.parse(JSON.stringify(rooms[roomId].regions)) };
+        socket.emit('presetSaved');
+    });
+
+    socket.on('joinGame', (data) => {
+        const roomId = playerToRoom[socket.id] || 'MAIN'; if (!rooms[roomId]) return; const room = rooms[roomId];
+        for (let k in room.countries) { if (room.countries[k].socketId === socket.id) room.countries[k].socketId = null; }
+        let cId = data.isNew ? `c_${Math.random().toString(36).substr(2, 9)}` : data.countryId;
+        if (data.isNew) {
+            room.countries[cId] = { id: cId, name: data.name, flag: data.flag, color: data.color, socketId: socket.id, cells: 0, dollars: 10000, population: 100000, military: 10000, cap: 10000, isSpawned: false, online: true, happiness: 50 };
+            io.to(roomId).emit('newsEvent', `🌍 Новая нация "${data.name}" появилась на карте!`);
+        } else if (room.countries[cId]) { room.countries[cId].online = true; room.countries[cId].socketId = socket.id; }
+        socket.emit('joinSuccess', cId); io.to(roomId).emit('initLobby', room.countries); io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
+    });
+
+    socket.on('switchCountry', (cId) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId || !rooms[roomId]) return; const room = rooms[roomId];
+        if (room.countries[cId]) {
+            for (let k in room.countries) if (room.countries[k].socketId === socket.id) room.countries[k].socketId = null;
+            room.countries[cId].socketId = socket.id; socket.emit('joinSuccess', cId);
+            io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
         }
     });
-}
 
-socket.on('initLobby', (cList) => { 
-    countries = cList; if (isPlaying) return; 
-    const select = document.getElementById('countrySelect'); 
-    if(select) { 
-        select.innerHTML = '<option value="new">-- Новая Нация --</option>'; 
-        for (let cId in countries) { if (!countries[cId].online || !countries[cId].socketId) select.innerHTML += `<option value="${cId}">${countries[cId].name} (Свободна)</option>`; } 
-    } 
-});
+    socket.on('spawnCapital', (data) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const country = room.countries[cId]; if (!country || country.isSpawned) return;
 
-document.getElementById('joinBtn')?.addEventListener('click', () => {
-    const selectVal = document.getElementById('countrySelect').value;
-    if (selectVal === 'new') {
-        const name = document.getElementById('countryName').value || 'Империя'; const color = document.getElementById('countryColor').value;
-        let finalFlag = base64Flag; 
-        if (!finalFlag || !finalFlag.startsWith('data:image')) { 
-            const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; 
-            const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); finalFlag = tCnv.toDataURL('image/png'); 
-        }
-        socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag });
-    } else { socket.emit('joinGame', { isNew: false, countryId: selectVal }); }
-});
+        country.isSpawned = true;
+        const startRegionId = `reg_${cId}_cap`;
+        room.regions[startRegionId] = { name: "Столичный округ", owner: cId, cells: 0, level: 1, roadLevel: 0, prodLevel: 0, bizLevel: 0, recLevel: 0, cityX: data.x, cityY: data.y };
 
-socket.on('joinSuccess', (cId) => { myId = cId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('sideMenu').style.display = 'block'; isPlaying = true; updateEditorList(); if (countries[myId]) updateUI(); });
-
-window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '', isPublic: false }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; updateEditorList(); } }); }
-window.edCreateCountry = function() { const name = document.getElementById('edCountryName').value || 'Новая Страна'; const color = document.getElementById('edCountryColor').value; let finalFlag = edBase64Flag; if (!finalFlag) { const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); finalFlag = tCnv.toDataURL(); } socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag }); edBase64Flag = null; const fi = document.getElementById('edCountryFlagFile'); if(fi) fi.value = ""; }
-window.edSwitchCountry = function(cId) { socket.emit('switchCountry', cId); }
-window.edSaveAndExit = function() { const presetName = prompt("Введите название заготовки:"); if (presetName && presetName.trim() !== "") { socket.emit('savePreset', presetName.trim()); } }
-socket.on('presetSaved', () => { alert("Заготовка сохранена!"); location.reload(); });
-
-document.getElementById('drawRegionBtn')?.addEventListener('click', () => { isDrawingRegion = !isDrawingRegion; document.getElementById('drawRegionBtn').innerText = isDrawingRegion ? "Отменить" : "Оформить новый регион"; if (isDrawingRegion) { currentDrawingRegionId = `reg_${myId}_${Math.random().toString(36).substr(2, 5)}`; showMsg("Обведите территорию ЛКМ"); } else { lassoPoints = []; } });
-document.getElementById('deployBtn')?.addEventListener('click', () => { const amount = document.getElementById('deployAmount').value; if (clickedRegionId) socket.emit('deployArmy', { regionId: clickedRegionId, amount: amount }); });
-document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
-document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
-
-document.getElementById('upInfraBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeInfra', clickedRegionId); });
-document.getElementById('upRoadBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRoads', clickedRegionId); });
-document.getElementById('upProdBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeProd', clickedRegionId); });
-document.getElementById('upBizBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeBiz', clickedRegionId); });
-document.getElementById('upRecBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRec', clickedRegionId); });
-
-document.getElementById('disbandBtn')?.addEventListener('click', () => { if (selectedArmies.length > 0) { socket.emit('disbandArmies', selectedArmies); selectedArmies = []; updateArmyPanel(); } });
-
-document.getElementById('autoAttackBtn')?.addEventListener('click', () => {
-    isSelectingAutoAttackTarget = !isSelectingAutoAttackTarget; const btn = document.getElementById('autoAttackBtn'); const tip = document.getElementById('autoAttackTip');
-    if (isSelectingAutoAttackTarget) { btn.style.background = 'linear-gradient(180deg, #e67e22, #b8651b)'; btn.innerText = 'Укажите направление'; if(tip) tip.style.display = 'block';
-    } else { btn.style.background = 'linear-gradient(180deg, #f39c12, #d35400)'; btn.innerText = 'План Наступления'; if(tip) tip.style.display = 'none'; }
-});
-
-socket.on('initData', (data) => { territory = data.territory; armies = data.armies; regions = data.regions; });
-socket.on('updateMap', (data) => { countries = data.countries; territory = data.territory; regions = data.regions; if (myId && countries[myId] && countries[myId].isSpawned) isSpawned = true; updateUI(); updateEditorList(); updateRegionPanel(); });
-socket.on('syncTerritory', (data) => { territory = data.territory; regions = data.regions; updateRegionPanel(); });
-socket.on('updateResources', (c) => { countries = c; updateUI(); updateRegionPanel(); });
-socket.on('batchCellUpdate', (data) => { for (const key in data.cells) { territory[key] = data.cells[key]; } regions = data.regions; if (data.countries) countries = data.countries; updateUI(); updateRegionPanel(); });
-socket.on('syncArmies', (a) => { armies = a; for(let id in armies) { if(!visualArmies[id]) { visualArmies[id] = { x: armies[id].x, y: armies[id].y, count: armies[id].count }; } visualArmies[id].autoTarget = armies[id].autoTarget; } selectedArmies = selectedArmies.filter(id => armies[id]); updateArmyPanel(); });
-
-function updateUI() {
-    if (myId && countries[myId]) {
-        const country = countries[myId];
-        const nameEl = document.getElementById('myName');
-        const flagEl = document.getElementById('myFlagUI');
-        
-        if (nameEl && nameEl.innerText !== country.name) nameEl.innerText = country.name;
-        if (flagEl) {
-            let safeFlag = country.flag;
-            if (!safeFlag || typeof safeFlag !== 'string' || !safeFlag.startsWith('data:image')) {
-                const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = country.color || '#555'; tCtx.fillRect(0, 0, 64, 64); safeFlag = tCnv.toDataURL('image/png'); countries[myId].flag = safeFlag; 
-            }
-            if (flagEl.getAttribute('src') !== safeFlag) flagEl.setAttribute('src', safeFlag);
-        }
-        
-        isSpawned = country.isSpawned;
-        
-        let hap = Math.floor(country.happiness || 50);
-        const hapEl = document.getElementById('myHappiness');
-        if (hapEl) {
-            hapEl.innerText = hap + '%';
-            hapEl.style.color = hap >= 80 ? '#2ecc71' : (hap >= 40 ? '#f1c40f' : '#e74c3c');
-        }
-
-        document.getElementById('myArea').innerText = (country.cells * KM_PER_TILE).toLocaleString();
-        document.getElementById('myPop').innerText = Math.floor(country.population).toLocaleString();
-        document.getElementById('myDollars').innerText = Math.floor(country.dollars).toLocaleString();
-        const incEl = document.getElementById('myIncome'); 
-        if (incEl) { incEl.innerText = (country.lastIncome >= 0 ? "+" : "") + Math.floor(country.lastIncome); incEl.style.color = country.lastIncome >= 0 ? '#2ecc71' : '#e74c3c'; }
-        document.getElementById('myMilitary').innerText = Math.floor(country.military).toLocaleString();
-        document.getElementById('myCap').innerText = country.cap.toLocaleString();
-    }
-}
-
-function updateRegionPanel() {
-    const rp = document.getElementById('regionPanel'); if (!rp) return;
-    if (!clickedRegionId || !regions[clickedRegionId]) { rp.style.display = 'none'; return; }
-    const reg = regions[clickedRegionId]; rp.style.display = 'block';
-    
-    document.getElementById('regName').innerText = reg.name;
-    document.getElementById('regOwner').innerText = countries[reg.owner] ? countries[reg.owner].name : "Неизвестно";
-    
-    document.getElementById('regLevel').innerText = (reg.level||1) + '/10';
-    document.getElementById('regRoadLevel').innerText = (reg.roadLevel||0) + '/10';
-    document.getElementById('regProdLevel').innerText = (reg.prodLevel||0) + '/10';
-    document.getElementById('regBizLevel').innerText = (reg.bizLevel||0) + '/10';
-    document.getElementById('regRecLevel').innerText = (reg.recLevel||0) + '/10';
-    
-    const renBtn = document.getElementById('renameRegBtn');
-    const deployBtn = document.getElementById('deployBtn');
-    const upgList = document.getElementById('upgradeList');
-    
-    if (reg.owner === myId) { 
-        if(renBtn) renBtn.style.display = 'inline-block'; 
-        upgList.style.display = 'flex';
-        
-        const cells = reg.cells || 0;
-        const calcCost = (base, mult, lvl) => (base * (lvl + 1)) + (cells * mult * (lvl + 1));
-        
-        const setBtn = (id, lvl, cost) => {
-            let btn = document.getElementById(id);
-            if(btn) {
-                if(lvl >= 10) { btn.innerText = "МАКС"; btn.disabled = true; }
-                else { btn.innerText = cost.toLocaleString() + " 💵"; btn.disabled = false; }
-            }
-        };
-
-        setBtn('upInfraBtn', reg.level||1, calcCost(5000, 10, reg.level||1));
-        setBtn('upRoadBtn', reg.roadLevel||0, calcCost(3000, 5, reg.roadLevel||0));
-        setBtn('upProdBtn', reg.prodLevel||0, calcCost(4000, 8, reg.prodLevel||0));
-        setBtn('upBizBtn', reg.bizLevel||0, calcCost(6000, 12, reg.bizLevel||0));
-        setBtn('upRecBtn', reg.recLevel||0, calcCost(3000, 5, reg.recLevel||0));
-        
-        let cityCell = territory[`${reg.cityX}_${reg.cityY}`];
-        let isOccupied = cityCell && cityCell.core !== myId && countries[cityCell.core] && countries[cityCell.core].cells > 0;
-        
-        if (isOccupied) { deployBtn.disabled = true; deployBtn.innerText = "Оккупировано"; } 
-        else { deployBtn.disabled = false; deployBtn.innerText = "Развернуть дивизии"; }
-    } else { 
-        if(renBtn) renBtn.style.display = 'none'; 
-        upgList.style.display = 'none';
-        deployBtn.disabled = true;
-    }
-}
-
-function updateArmyPanel() {
-    const ap = document.getElementById('armyPanel'); if (!ap) return;
-    const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
-    
-    if (mySelected.length > 0 && mySelected.length === selectedArmies.length) {
-        ap.style.display = 'block';
-        let totalCount = 0;
-        mySelected.forEach(id => totalCount += armies[id].count);
-        document.getElementById('armyCount').innerText = Math.floor(totalCount) + (mySelected.length > 1 ? ` (${mySelected.length} див.)` : ' ед.');
-    } else { 
-        ap.style.display = 'none'; 
-        isSelectingAutoAttackTarget = false;
-        if (document.getElementById('autoAttackBtn')) {
-            document.getElementById('autoAttackBtn').style.background = 'linear-gradient(180deg, #f39c12, #d35400)';
-            document.getElementById('autoAttackBtn').innerText = 'План Наступления';
-            document.getElementById('autoAttackTip').style.display = 'none';
-        }
-    }
-}
-
-function updateEditorList() {
-    const list = document.getElementById('edCountryList');
-    if (!list || !isEditorMode) return;
-    
-    list.innerHTML = '';
-    for (let cId in countries) {
-        const c = countries[cId];
-        list.innerHTML += `
-            <div style="display:flex; justify-content:space-between; align-items:center; background:#151718; padding:8px; margin-bottom:5px; border:1px solid #333; border-radius: 2px;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="width:14px; height:14px; background:${c.color}; border:1px solid #000; border-radius:2px;"></div>
-                    <span style="color:#ecf0f1; font-size:12px; font-weight:bold;">${c.name}</span>
-                </div>
-                <button onclick="edSwitchCountry('${cId}')" style="background:linear-gradient(180deg, #2980b9, #2471a3); color:#fff; border:1px solid #111; padding:4px 8px; cursor:pointer; font-size:10px; font-weight:bold; border-radius:2px; text-transform:uppercase;">Играть</button>
-            </div>
-        `;
-    }
-}
-
-function pointInPolygon(point, vs) { let x = point[0], y = point[1]; let inside = false; for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) { let xi = vs[i][0], yi = vs[i][1]; let xj = vs[j][0], yj = vs[j][1]; let intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi); if (intersect) inside = !inside; } return inside; }
-function pt(gx, gy) { let sin1 = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453; let sin2 = Math.sin(gx * 39.346 + gy * 11.135) * 43758.5453; let randX = sin1 - Math.floor(sin1); let randY = sin2 - Math.floor(sin2); let wobble = TILE_SIZE * 0.7; return { x: (gx * TILE_SIZE) + (randX - 0.5) * wobble, y: (gy * TILE_SIZE) + (randY - 0.5) * wobble }; }
-
-function gameLoop() {
-    const camSpeed = 15 / camera.zoom;
-    if (keys.w) camera.y += camSpeed; if (keys.s) camera.y -= camSpeed; if (keys.a) camera.x += camSpeed; if (keys.d) camera.x -= camSpeed;
-    if (camera.x > 0) camera.x = 0; if (camera.y > 0) camera.y = 0;
-    const minX = canvas.width - WORLD_WIDTH * camera.zoom; const minY = canvas.height - WORLD_HEIGHT * camera.zoom;
-    if (camera.x < minX) camera.x = minX; if (camera.y < minY) camera.y = minY;
-
-    for(let id in visualArmies) {
-        if(armies[id]) { 
-            visualArmies[id].x += (armies[id].x - visualArmies[id].x) * 0.4; 
-            visualArmies[id].y += (armies[id].y - visualArmies[id].y) * 0.4; 
-            visualArmies[id].count = armies[id].count; visualArmies[id].owner = armies[id].owner; 
-        } else { delete visualArmies[id]; }
-    }
-    drawMap(); requestAnimationFrame(gameLoop);
-}
-
-function drawMap() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (!bgMap.complete || bgMap.naturalWidth === 0) { ctx.fillStyle = '#111'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
-
-    ctx.save(); ctx.translate(camera.x, camera.y); ctx.scale(camera.zoom, camera.zoom);
-    if (bgMap.complete && bgMap.naturalWidth > 0) ctx.drawImage(bgMap, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-
-    for (const key in territory) {
-        const t = territory[key];
-        const owner = countries[t.owner];
-        if (owner) { 
-            const [ix, iy] = key.split('_').map(Number); 
-            ctx.fillStyle = owner.color; 
-            let isOccupied = t.core !== t.owner && countries[t.core] && countries[t.core].cells > 0;
-            ctx.globalAlpha = isOccupied ? 0.15 : 0.4; 
-            ctx.fillRect(ix * TILE_SIZE - 1, iy * TILE_SIZE - 1, TILE_SIZE + 2, TILE_SIZE + 2); 
-        }
-    }
-    ctx.globalAlpha = 1.0;
-
-    if (hoveredRegionId) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-        for (let key in territory) {
-            if (territory[key].regionId === hoveredRegionId) {
-                const [cx, cy] = key.split('_').map(Number);
-                ctx.fillRect(cx * TILE_SIZE, cy * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-            }
-        }
-    }
-
-    let bordersByOwner = {};
-    for (const key in territory) {
-        const ownerId = territory[key].owner;
-        if (!bordersByOwner[ownerId]) bordersByOwner[ownerId] = [];
-        bordersByOwner[ownerId].push(key);
-    }
-
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-
-    for (let cId in bordersByOwner) {
-        const country = countries[cId]; if (!country) continue;
-        ctx.beginPath();
-        bordersByOwner[cId].forEach(key => {
-            const [cx, cy] = key.split('_').map(Number);
-            const nTop = territory[`${cx}_${cy-1}`]?.owner === cId;
-            const nBottom = territory[`${cx}_${cy+1}`]?.owner === cId;
-            const nLeft = territory[`${cx-1}_${cy}`]?.owner === cId;
-            const nRight = territory[`${cx+1}_${cy}`]?.owner === cId;
-            if (!nTop) { let p1 = pt(cx, cy); let p2 = pt(cx+1, cy); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
-            if (!nBottom) { let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
-            if (!nLeft) { let p1 = pt(cx, cy); let p2 = pt(cx, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
-            if (!nRight) { let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
-        });
-        ctx.strokeStyle = country.color; ctx.lineWidth = TILE_SIZE * 2.5; ctx.globalAlpha = 0.4; ctx.stroke();
-        ctx.strokeStyle = country.color; ctx.lineWidth = TILE_SIZE * 1.0; ctx.globalAlpha = 1.0; ctx.stroke();
-        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)'; ctx.lineWidth = TILE_SIZE * 0.3; ctx.stroke();
-    }
-
-    ctx.beginPath(); ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; ctx.lineWidth = 1.5 / camera.zoom; ctx.setLineDash([4 / camera.zoom, 4 / camera.zoom]);
-    for (let key in territory) {
-        const cell = territory[key]; const [cx, cy] = key.split('_').map(Number);
-        const nRight = territory[`${cx+1}_${cy}`]; const nBottom = territory[`${cx}_${cy+1}`];
-        if (nRight && nRight.owner === cell.owner && nRight.regionId !== cell.regionId) { let p1 = pt(cx+1, cy); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
-        if (nBottom && nBottom.owner === cell.owner && nBottom.regionId !== cell.regionId) { let p1 = pt(cx, cy+1); let p2 = pt(cx+1, cy+1); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); }
-    }
-    ctx.stroke(); ctx.setLineDash([]); 
-
-    for (const rId in regions) {
-        const reg = regions[rId];
-        if (reg.cityX !== undefined) {
-            const tx = reg.cityX * TILE_SIZE + TILE_SIZE/2; const ty = reg.cityY * TILE_SIZE + TILE_SIZE/2;
-            ctx.fillStyle = 'rgba(20, 20, 20, 0.9)'; ctx.fillRect(tx - 4, ty - 4, 8, 8);
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 1 / camera.zoom; ctx.strokeRect(tx - 4, ty - 4, 8, 8);
-            ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.textAlign = 'center'; ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 2 / camera.zoom;
-            ctx.strokeText(reg.name, tx, ty - (15 / camera.zoom)); ctx.fillText(reg.name, tx, ty - (15 / camera.zoom));
-        }
-    }
-
-    if (isDrawingRegion && lassoPoints.length > 0) {
-        ctx.beginPath(); ctx.moveTo(lassoPoints[0].x, lassoPoints[0].y);
-        for(let i=1; i<lassoPoints.length; i++) ctx.lineTo(lassoPoints[i].x, lassoPoints[i].y);
-        ctx.lineTo(lassoPoints[0].x, lassoPoints[0].y); ctx.strokeStyle = '#f1c40f'; ctx.lineWidth = 2 / camera.zoom; ctx.stroke();
-    }
-
-    const rw = 26 / camera.zoom; const rh = 16 / camera.zoom;
-    for(const id in visualArmies) {
-        const army = visualArmies[id]; const owner = countries[army.owner]; if (!owner) continue;
-        if (selectedArmies.includes(id)) { ctx.fillStyle = 'rgba(46, 204, 113, 0.6)'; ctx.fillRect(army.x - (rw/2) - 4/camera.zoom, army.y - (rh/2) - 4/camera.zoom, rw + 8/camera.zoom, rh + 8/camera.zoom); }
-        const flagImg = getFlagImage(army.owner, owner.flag);
-        ctx.fillStyle = owner.color; ctx.fillRect(army.x - rw/2, army.y - rh/2, rw, rh);
-        if (flagImg && flagImg.complete && flagImg.naturalWidth > 0) ctx.drawImage(flagImg, army.x - rw/2, army.y - rh/2, rw, rh);
-        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5 / camera.zoom; ctx.strokeRect(army.x - rw/2, army.y - rh/2, rw, rh);
-        ctx.fillStyle = 'white'; ctx.font = `bold ${10 / camera.zoom}px Arial`; ctx.strokeStyle = 'black'; ctx.lineWidth = 2 / camera.zoom; ctx.textAlign = 'center';
-        ctx.strokeText(Math.floor(army.count).toString(), army.x, army.y + rh/2 + (12 / camera.zoom)); ctx.fillText(Math.floor(army.count).toString(), army.x, army.y + rh/2 + (12 / camera.zoom));
-        if (army.autoTarget) { ctx.fillStyle = '#e74c3c'; ctx.font = `bold ${12 / camera.zoom}px Arial`; ctx.fillText("⚔️", army.x + rw/2 + 8/camera.zoom, army.y - rh/2); }
-    }
-
-    if (isSelecting && !isDrawingRegion) {
-        ctx.fillStyle = 'rgba(46, 204, 113, 0.2)'; ctx.strokeStyle = '#2ecc71'; ctx.lineWidth = 1 / camera.zoom;
-        const w = selectionBox.endX - selectionBox.startX; const h = selectionBox.endY - selectionBox.startY;
-        ctx.fillRect(selectionBox.startX, selectionBox.startY, w, h); ctx.strokeRect(selectionBox.startX, selectionBox.startY, w, h);
-    }
-    
-    if (isSelectingAutoAttackTarget) {
-        ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 2/camera.zoom; ctx.beginPath();
-        const world = getWorldCoords({clientX: lastMouse.x, clientY: lastMouse.y});
-        ctx.arc(world.x, world.y, 10/camera.zoom, 0, Math.PI*2);
-        ctx.moveTo(world.x - 15/camera.zoom, world.y); ctx.lineTo(world.x + 15/camera.zoom, world.y);
-        ctx.moveTo(world.x, world.y - 15/camera.zoom); ctx.lineTo(world.x, world.y + 15/camera.zoom); ctx.stroke();
-    }
-    ctx.restore();
-
-    if (myId && !isSpawned) {
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'; ctx.fillRect(0, canvas.height / 2 - 60, canvas.width, 120);
-        ctx.fillStyle = '#f1c40f'; ctx.font = 'bold 35px "Segoe UI"'; ctx.textAlign = 'center'; ctx.fillText("КЛИКНИТЕ НА КАРТУ, ЧТОБЫ ОСНОВАТЬ СТОЛИЦУ", canvas.width / 2, canvas.height / 2 + 10);
-    }
-}
-
-canvas.addEventListener('wheel', (e) => { e.preventDefault(); const zoomAmount = 0.1; const oldZoom = camera.zoom; const minZoom = Math.max(canvas.width / WORLD_WIDTH, canvas.height / WORLD_HEIGHT); camera.zoom = e.deltaY > 0 ? Math.max(minZoom, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount); const rect = canvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height); camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom); camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom); });
-function getWorldCoords(e) { const rect = canvas.getBoundingClientRect(); const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width); const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height); let wx = (canvasMouseX - camera.x) / camera.zoom; let wy = (canvasMouseY - camera.y) / camera.zoom; return { x: Math.max(0, Math.min(WORLD_WIDTH, wx)), y: Math.max(0, Math.min(WORLD_HEIGHT, wy)) }; }
-
-canvas.addEventListener('mousedown', (e) => { 
-    const world = getWorldCoords(e);
-    if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
-    if (isSelectingAutoAttackTarget && e.button === 0) {
-        isSelectingAutoAttackTarget = false; document.getElementById('autoAttackBtn').style.background = 'linear-gradient(180deg, #f39c12, #d35400)'; document.getElementById('autoAttackBtn').innerText = 'План Наступления'; document.getElementById('autoAttackTip').style.display = 'none';
-        let targetCountry = null; const rw = 26/camera.zoom; const rh = 16/camera.zoom;
-        for (let id in visualArmies) { let a = visualArmies[id]; if (Math.abs(a.x - world.x) <= rw/2 && Math.abs(a.y - world.y) <= rh/2) { targetCountry = a.owner; break; } }
-        if (!targetCountry) { const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`; if (territory[key]) targetCountry = territory[key].owner; }
-        if (targetCountry && targetCountry !== myId && selectedArmies.length > 0) { socket.emit('autoAttack', { armyIds: selectedArmies, targetCountry: targetCountry }); showMsg("Блицкриг начат!"); } else { showMsg("Цель отменена."); } return; 
-    }
-    if (e.button === 0) {
-        if (!isSpawned) { socket.emit('spawnCapital', { x: Math.floor(world.x/TILE_SIZE), y: Math.floor(world.y/TILE_SIZE) }); return; }
-        if (isDrawingRegion) { lassoPoints = [world]; return; }
-        isSelecting = true; selectionBox.startX = world.x; selectionBox.startY = world.y; selectionBox.endX = world.x; selectionBox.endY = world.y;
-    }
-    if (e.button === 2 && selectedArmies.length > 0 && !isDrawingRegion) { socket.emit('moveArmies', { armyIds: selectedArmies, targetX: world.x, targetY: world.y }); }
-});
-
-canvas.addEventListener('mousemove', (e) => { 
-    if (isPanning) { camera.x += (e.clientX - lastMouse.x); camera.y += (e.clientY - lastMouse.y); }
-    lastMouse = {x: e.clientX, y: e.clientY}; const world = getWorldCoords(e);
-    const cellKey = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`;
-    if (territory[cellKey] && territory[cellKey].owner === myId) hoveredRegionId = territory[cellKey].regionId; else hoveredRegionId = null;
-    if (isSelecting) { selectionBox.endX = world.x; selectionBox.endY = world.y; } else if (isDrawingRegion && e.buttons === 1) { lassoPoints.push(world); }
-});
-
-canvas.addEventListener('mouseup', (e) => { 
-    if (e.button === 1) isPanning = false;
-    if (isDrawingRegion) {
-        if (lassoPoints.length > 2) {
-            let minX = WORLD_WIDTH, maxX = 0, minY = WORLD_HEIGHT, maxY = 0;
-            let poly = lassoPoints.map(p => { if(p.x < minX) minX = p.x; if(p.x > maxX) maxX = p.x; if(p.y < minY) minY = p.y; if(p.y > maxY) maxY = p.y; return [p.x, p.y]; });
-            let tilesInside = [];
-            for(let c = Math.max(0, Math.floor(minX/TILE_SIZE)); c <= Math.min(WORLD_WIDTH/TILE_SIZE-1, Math.ceil(maxX/TILE_SIZE)); c++) {
-                for(let r = Math.max(0, Math.floor(minY/TILE_SIZE)); r <= Math.min(WORLD_HEIGHT/TILE_SIZE-1, Math.ceil(maxY/TILE_SIZE)); r++) {
-                    if (pointInPolygon([c*TILE_SIZE+2, r*TILE_SIZE+2], poly)) tilesInside.push(`${c}_${r}`);
+        for(let dx = -6; dx <= 6; dx++) {
+            for(let dy = -6; dy <= 6; dy++) {
+                if(dx*dx + dy*dy <= 36) { 
+                    const cx = data.x + dx; const cy = data.y + dy;
+                    if (cx >= 0 && cx < WORLD_WIDTH/TILE_SIZE && cy >= 0 && cy < WORLD_HEIGHT/TILE_SIZE) {
+                        const key = `${cx}_${cy}`; 
+                        room.territory[key] = { owner: cId, core: cId, regionId: startRegionId };
+                        country.cells++; room.regions[startRegionId].cells++;
+                    }
                 }
             }
-            if (tilesInside.length > 0) { const name = prompt("Назовите регион:", `Регион ${Object.keys(regions).length + 1}`); if (name !== null) { socket.emit('lassoRegion', { tiles: tilesInside, newRegionId: currentDrawingRegionId, name: name || "Без названия" }); showMsg("Оформляем..."); } }
         }
-        isDrawingRegion = false; lassoPoints = []; document.getElementById('drawRegionBtn').innerText = "Оформить новый регион"; return;
+        room.mapChangedForCauldrons = true;
+        io.to(roomId).emit('newsEvent', `🏛️ ${country.name} основывает столицу!`);
+        io.to(roomId).emit('updateMap', { countries: room.countries, territory: room.territory, regions: room.regions });
+    });
+
+    socket.on('lassoRegion', (data) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        if (!cId || !data.tiles.length) return;
+        let ownedTiles = []; data.tiles.forEach(key => { if (room.territory[key] && room.territory[key].owner === cId) ownedTiles.push(key); });
+        if (ownedTiles.length === 0) return; 
+
+        if (!room.regions[data.newRegionId]) {
+            let sumX = 0, sumY = 0;
+            ownedTiles.forEach(key => { const [x, y] = key.split('_').map(Number); sumX += x; sumY += y; });
+            const avgX = Math.floor(sumX / ownedTiles.length); const avgY = Math.floor(sumY / ownedTiles.length);
+            let bestKey = ownedTiles[0]; let minDist = Infinity;
+            ownedTiles.forEach(key => { const [x, y] = key.split('_').map(Number); const d = Math.hypot(x - avgX, y - avgY); if (d < minDist) { minDist = d; bestKey = key; } });
+            const [fX, fY] = bestKey.split('_').map(Number);
+            room.regions[data.newRegionId] = { name: data.name, owner: cId, cells: 0, level: 1, roadLevel: 0, prodLevel: 0, bizLevel: 0, recLevel: 0, cityX: fX, cityY: fY };
+        }
+
+        ownedTiles.forEach(key => {
+            const cell = room.territory[key];
+            if (room.regions[cell.regionId]) room.regions[cell.regionId].cells--;
+            cell.regionId = data.newRegionId; room.regions[data.newRegionId].cells++;
+        });
+        io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions });
+    });
+
+    socket.on('renameRegion', (data) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const reg = room.regions[data.regionId];
+        if (reg && reg.owner === cId && data.newName) { reg.name = data.newName.substring(0, 20); io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions }); }
+    });
+
+    function doUpgrade(socket, regionId, statName, maxLvl, baseCost, cellMult) {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const reg = room.regions[regionId];
+        if (reg && reg.owner === cId) {
+            let currentLvl = reg[statName] || (statName==='level'?1:0);
+            if (currentLvl < maxLvl) {
+                const targetLvl = currentLvl + 1;
+                const cost = (baseCost * targetLvl) + ((reg.cells || 0) * cellMult * targetLvl);
+                if (room.countries[cId].dollars >= cost) {
+                    room.countries[cId].dollars -= cost;
+                    reg[statName] = targetLvl;
+                    io.to(roomId).emit('syncTerritory', { territory: room.territory, regions: room.regions });
+                    io.to(roomId).emit('updateResources', room.countries);
+                }
+            }
+        }
     }
 
-    if (e.button === 0 && isSelecting && !isSelectingAutoAttackTarget) {
-        isSelecting = false; const world = getWorldCoords(e);
-        const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x); const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
-        const isClick = (maxX - minX < 5 && maxY - minY < 5); selectedArmies = []; const rw = 26 / camera.zoom; const rh = 16 / camera.zoom;
-        for (const id in visualArmies) { const a = visualArmies[id]; if (a.owner === myId) { if (isClick && Math.abs(a.x - world.x) <= rw/2 && Math.abs(a.y - world.y) <= rh/2) selectedArmies.push(id); else if (!isClick && a.x >= minX && a.x <= maxX && a.y >= minY && a.y <= maxY) selectedArmies.push(id); } }
-        updateArmyPanel();
-        if (isClick && selectedArmies.length === 0) { const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`; if (territory[key] && territory[key].owner === myId) { clickedRegionId = territory[key].regionId; updateRegionPanel(); } else { clickedRegionId = null; updateRegionPanel(); } } else if (!isClick || selectedArmies.length > 0) { clickedRegionId = null; updateRegionPanel(); }
-    }
+    socket.on('upgradeInfra', (rId) => doUpgrade(socket, rId, 'level', 10, 5000, 10));
+    socket.on('upgradeRoads', (rId) => doUpgrade(socket, rId, 'roadLevel', 10, 3000, 5));
+    socket.on('upgradeProd',  (rId) => doUpgrade(socket, rId, 'prodLevel', 10, 4000, 8));
+    socket.on('upgradeBiz',   (rId) => doUpgrade(socket, rId, 'bizLevel', 10, 6000, 12));
+    socket.on('upgradeRec',   (rId) => doUpgrade(socket, rId, 'recLevel', 10, 3000, 5));
+
+    socket.on('deployArmy', (data) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        const reg = room.regions[data.regionId];
+        
+        if (reg && reg.owner === cId && room.countries[cId].military >= data.amount) {
+            let cityCell = room.territory[`${reg.cityX}_${reg.cityY}`];
+            if (cityCell && cityCell.core !== cId) {
+                if (room.countries[cityCell.core] && room.countries[cityCell.core].cells > 0) return; 
+            }
+
+            room.countries[cId].military -= data.amount;
+            room.pendingDeployments.push({ owner: cId, amount: parseInt(data.amount), regionId: data.regionId, readyAt: Date.now() + 5000 });
+            io.to(roomId).emit('updateResources', room.countries);
+        }
+    });
+
+    socket.on('disbandArmies', (armyIds) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        if (!Array.isArray(armyIds)) return;
+        let stateChanged = false;
+        armyIds.forEach(armyId => {
+            if (room.armies[armyId] && room.armies[armyId].owner === cId) {
+                room.countries[cId].military += Math.floor(room.armies[armyId].count); 
+                delete room.armies[armyId]; stateChanged = true;
+            }
+        });
+        if (stateChanged) { io.to(roomId).emit('syncArmies', room.armies); io.to(roomId).emit('updateResources', room.countries); }
+    });
+
+    socket.on('moveArmies', (data) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        data.armyIds.forEach(id => {
+            if (room.armies[id] && room.armies[id].owner === cId) {
+                room.armies[id].targetX = Math.max(5, Math.min(WORLD_WIDTH - 5, data.targetX)); 
+                room.armies[id].targetY = Math.max(5, Math.min(WORLD_HEIGHT - 5, data.targetY));
+                room.armies[id].autoTarget = null;
+            }
+        });
+    });
+
+    socket.on('autoAttack', (data) => {
+        const roomId = playerToRoom[socket.id]; if (!roomId) return; const room = rooms[roomId];
+        const cId = Object.keys(room.countries).find(key => room.countries[key].socketId === socket.id);
+        if (!data.armyIds || !Array.isArray(data.armyIds)) return;
+        data.armyIds.forEach(aId => {
+            if (room.armies[aId] && room.armies[aId].owner === cId) {
+                room.armies[aId].autoTarget = data.targetCountry;
+                room.armies[aId].targetX = null; room.armies[aId].targetY = null;
+            }
+        });
+    });
+
+    socket.on('disconnect', () => { 
+        delete playerToRoom[socket.id]; 
+        // --- ОБНОВЛЯЕМ СЧЕТЧИК ПРИ ВЫХОДЕ ---
+        io.emit('onlineCount', io.engine.clientsCount + 100);
+    });
 });
+
+setInterval(() => {
+    for (let roomId in rooms) {
+        let room = rooms[roomId];
+        if (Object.keys(room.batchedCellUpdates).length > 0) {
+            io.to(roomId).emit('batchCellUpdate', { cells: room.batchedCellUpdates, regions: room.regions, countries: room.countries });
+            room.batchedCellUpdates = {}; 
+        }
+    }
+}, 40);
+
+setInterval(() => {
+    for (let roomId in rooms) {
+        let room = rooms[roomId];
+        let enemyData = {}; let activeTargets = new Set();
+        for (let aId in room.armies) if (room.armies[aId].autoTarget) activeTargets.add(room.armies[aId].autoTarget);
+        
+        if (activeTargets.size > 0) {
+            for (let t of activeTargets) enemyData[t] = { armies: [], cities: [], tiles: [] };
+            for (let eId in room.armies) { let e = room.armies[eId]; if (enemyData[e.owner]) enemyData[e.owner].armies.push({x: e.x, y: e.y}); }
+            for (let rId in room.regions) { let r = room.regions[rId]; if (enemyData[r.owner] && r.cityX !== undefined) { enemyData[r.owner].cities.push({x: r.cityX * TILE_SIZE, y: r.cityY * TILE_SIZE}); } }
+            for (let key in room.territory) { let owner = room.territory[key].owner; if (enemyData[owner]) { let splitIdx = key.indexOf('_'); enemyData[owner].tiles.push({ x: Number(key.slice(0, splitIdx)) * TILE_SIZE, y: Number(key.slice(splitIdx + 1)) * TILE_SIZE }); } }
+        }
+
+        for (let aId in room.armies) {
+            let a = room.armies[aId];
+            if (a.autoTarget) {
+                let data = enemyData[a.autoTarget];
+                if (!data || (data.armies.length === 0 && data.cities.length === 0 && data.tiles.length === 0)) { a.autoTarget = null; continue; }
+                let bestTarget = null; let bestDist = Infinity;
+                if (data.armies.length > 0) { for (let pt of data.armies) { let d = Math.hypot(a.x - pt.x, a.y - pt.y); if (d < bestDist) { bestDist = d; bestTarget = pt; } }
+                } else if (data.cities.length > 0) { for (let pt of data.cities) { let d = Math.hypot(a.x - pt.x, a.y - pt.y); if (d < bestDist) { bestDist = d; bestTarget = pt; } }
+                } else {
+                    let sampleCount = Math.min(100, data.tiles.length);
+                    for (let i = 0; i < sampleCount; i++) { let idx = Math.floor(Math.random() * data.tiles.length); let pt = data.tiles[idx]; let d = Math.hypot(a.x - pt.x, a.y - pt.y); if (d < bestDist) { bestDist = d; bestTarget = pt; } }
+                }
+                if (bestTarget) { a.targetX = bestTarget.x + (Math.random() * 10 - 5); a.targetY = bestTarget.y + (Math.random() * 10 - 5); }
+            }
+        }
+    }
+}, 1000);
+
+setInterval(() => {
+    const now = Date.now();
+    for (let roomId in rooms) {
+        let room = rooms[roomId]; let stateChanged = false;
+
+        for (let i = room.pendingDeployments.length - 1; i >= 0; i--) {
+            const dep = room.pendingDeployments[i];
+            if (now >= dep.readyAt) {
+                const reg = room.regions[dep.regionId];
+                if (reg && reg.owner === dep.owner) {
+                    const id = `a_${Math.random().toString(36).substr(2, 9)}`;
+                    const speed = Math.max(0.025, 0.1 - (dep.amount / 200000));
+                    room.armies[id] = { id, owner: dep.owner, count: dep.amount, x: reg.cityX*TILE_SIZE, y: reg.cityY*TILE_SIZE, targetX: null, targetY: null, speed: speed, autoTarget: null };
+                    stateChanged = true;
+                } else { if (room.countries[dep.owner]) room.countries[dep.owner].military += dep.amount; }
+                room.pendingDeployments.splice(i, 1); io.to(roomId).emit('updateResources', room.countries);
+            }
+        }
+
+        const armyIds = Object.keys(room.armies);
+        armyIds.forEach(id => { room.armies[id].targets = []; room.armies[id].dmg = 0; });
+
+        for (let i = 0; i < armyIds.length; i++) {
+            const a = room.armies[armyIds[i]];
+            for (let j = i + 1; j < armyIds.length; j++) {
+                const b = room.armies[armyIds[j]]; const d = Math.hypot(a.x - b.x, a.y - b.y);
+                if (d < COLLISION_RADIUS * 2) {
+                    if (a.owner !== b.owner) { a.targets.push(b.id); b.targets.push(a.id); } 
+                    else { const p = (COLLISION_RADIUS * 2 - d) * 0.5; const ang = Math.atan2(a.y-b.y, a.x-b.x); a.x += Math.cos(ang)*p; a.y += Math.sin(ang)*p; b.x -= Math.cos(ang)*p; b.y -= Math.sin(ang)*p; stateChanged = true; }
+                } else if (d < ENGAGE_RADIUS && a.owner !== b.owner) { a.targets.push(b.id); b.targets.push(a.id); }
+            }
+        }
+
+        let cityCells = {};
+        for (let rId in room.regions) if (room.regions[rId].cityX !== undefined) cityCells[`${room.regions[rId].cityX}_${room.regions[rId].cityY}`] = rId;
+
+        armyIds.forEach(id => {
+            const a = room.armies[id];
+            
+            let speedMult = 1;
+            const cellX = Math.floor(a.x/TILE_SIZE); const cellY = Math.floor(a.y/TILE_SIZE);
+            const cellCenter = room.territory[`${cellX}_${cellY}`];
+            if (cellCenter && room.regions[cellCenter.regionId]) {
+                const reg = room.regions[cellCenter.regionId];
+                if (reg.owner === a.owner) speedMult = 1 + ((reg.roadLevel || 0) * 0.10); 
+            }
+
+            if (!a.targets.length && a.targetX !== null) {
+                const d = Math.hypot(a.targetX - a.x, a.targetY - a.y);
+                const actualSpeed = a.speed * speedMult;
+                if (d > actualSpeed) { a.x += ((a.targetX-a.x)/d)*actualSpeed; a.y += ((a.targetY-a.y)/d)*actualSpeed; stateChanged = true; } 
+                else { a.targetX = null; }
+            }
+            
+            const brushR = Math.max(0, Math.min(4, Math.floor(Math.sqrt(a.count) / 40))); 
+            
+            for(let dx = -brushR; dx <= brushR; dx++) {
+                for(let dy = -brushR; dy <= brushR; dy++) {
+                    if(dx*dx + dy*dy <= brushR*brushR || brushR === 0) {
+                        const cx = cellX + dx; const cy = cellY + dy;
+                        if(cx < 0 || cx >= WORLD_WIDTH/TILE_SIZE || cy < 0 || cy >= WORLD_HEIGHT/TILE_SIZE) continue;
+                        const cellKey = `${cx}_${cy}`; 
+                        
+                        if (cityCells[cellKey]) {
+                            let rId = cityCells[cellKey]; let reg = room.regions[rId];
+                            if (reg && reg.owner !== a.owner && reg.owner !== null) {
+                                let oldOwner = reg.owner; reg.owner = a.owner; let deathChecks = new Set();
+                                for (let tKey in room.territory) {
+                                    if (room.territory[tKey].regionId === rId) {
+                                        let tOldOwner = room.territory[tKey].owner;
+                                        if (room.countries[tOldOwner]) { room.countries[tOldOwner].cells--; deathChecks.add(tOldOwner); }
+                                        room.territory[tKey].owner = a.owner;
+                                        if (!room.territory[tKey].core) room.territory[tKey].core = tOldOwner; 
+                                        if (room.countries[a.owner]) room.countries[a.owner].cells++;
+                                        room.batchedCellUpdates[tKey] = room.territory[tKey];
+                                    }
+                                }
+                                io.to(roomId).emit('newsEvent', `🚩 Город взят! ${reg.name} оккупирован войсками ${room.countries[a.owner]?.name}!`);
+                                room.mapChangedForCauldrons = true; deathChecks.forEach(dId => checkCountryDeath(room, dId, roomId));
+                            }
+                        }
+
+                        const cell = room.territory[cellKey];
+                        if (!cell || cell.owner !== a.owner) {
+                            const oldOwner = cell ? cell.owner : null; const oldCore = cell && cell.core ? cell.core : (oldOwner ? oldOwner : a.owner);
+                            if (oldOwner && room.countries[oldOwner]) room.countries[oldOwner].cells--;
+                            if (cell && cell.regionId && room.regions[cell.regionId]) room.regions[cell.regionId].cells--;
+                            
+                            const newRegId = `reg_${a.owner}_cap`;
+                            room.territory[cellKey] = { owner: a.owner, core: oldCore, regionId: newRegId }; 
+                            if (room.countries[a.owner]) room.countries[a.owner].cells++;
+                            if (room.regions[newRegId]) room.regions[newRegId].cells++;
+                            room.batchedCellUpdates[cellKey] = room.territory[cellKey]; room.mapChangedForCauldrons = true;
+                            if (oldOwner) checkCountryDeath(room, oldOwner, roomId);
+                        }
+                    }
+                }
+            }
+        });
+
+        armyIds.forEach(id => {
+            const a = room.armies[id];
+            if (a.targets.length) { 
+                let dmgToDeal = (a.count * 0.0075) / a.targets.length; 
+                a.targets.forEach(tId => { const t = room.armies[tId]; if (t) t.dmg += dmgToDeal * (1 + (t.targets.length - 1) * 0.2); });
+            }
+        });
+
+        armyIds.forEach(id => {
+            if (room.armies[id].dmg > 0) { room.armies[id].count -= room.armies[id].dmg; stateChanged = true; }
+            if (room.armies[id].count <= 0) {
+                if (room.countries[room.armies[id].owner]) io.to(roomId).emit('newsEvent', `💀 Дивизия ${room.countries[room.armies[id].owner].name} уничтожена!`);
+                delete room.armies[id];
+            }
+        });
+
+        if (stateChanged) io.to(roomId).emit('syncArmies', room.armies);
+    }
+}, 33);
+
+const gridW = WORLD_WIDTH / TILE_SIZE; const gridH = WORLD_HEIGHT / TILE_SIZE;
+
+setInterval(() => {
+    for (let roomId in rooms) {
+        let room = rooms[roomId];
+        if (room.fillQ.length) {
+            let btch = room.fillQ.splice(0, Math.max(20, Math.floor(room.fillQ.length/20))); let deathChecks = new Set();
+            btch.forEach(c => {
+                const k = `${c.x}_${c.y}`; const oldCell = room.territory[k];
+                const oldOwner = oldCell ? oldCell.owner : null; const oldCore = oldCell && oldCell.core ? oldCell.core : (oldOwner ? oldOwner : c.owner);
+                if (oldOwner !== c.owner) {
+                    if (oldOwner && room.countries[oldOwner]) { room.countries[oldOwner].cells--; deathChecks.add(oldOwner); }
+                    if (oldCell && room.regions[oldCell.regionId]) room.regions[oldCell.regionId].cells--;
+                    room.territory[k] = { owner: c.owner, core: oldCore, regionId: c.regId };
+                    if (room.countries[c.owner]) room.countries[c.owner].cells++;
+                    if (room.regions[c.regId]) room.regions[c.regId].cells++;
+                    room.batchedCellUpdates[k] = room.territory[k]; 
+                }
+            });
+            deathChecks.forEach(dId => checkCountryDeath(room, dId, roomId)); continue;
+        }
+        
+        if (!room.mapChangedForCauldrons) continue;
+        let armyLocs = {}; for(let id in room.armies) { let k = `${Math.floor(room.armies[id].x/TILE_SIZE)}_${Math.floor(room.armies[id].y/TILE_SIZE)}`; if(!armyLocs[k]) armyLocs[k] = []; armyLocs[k].push(room.armies[id].owner); }
+        
+        let checked = 0;
+        while (checked < 3000) {
+            let idx = room.sY * gridW + room.sX;
+            if (room.vstd[idx] === 0) {
+                const startKey = `${room.sX}_${room.sY}`;
+                const startOwner = room.territory[startKey] ? room.territory[startKey].owner : null;
+                
+                let h = 0, t = 0, edge = false;
+                let owners = new Set();
+                let comp = []; 
+                let hasDefendingArmy = false;
+                
+                room.qX[t] = room.sX; room.qY[t] = room.sY; t++; 
+                room.vstd[idx] = 1;
+                
+                while(h < t) {
+                    let cx = room.qX[h]; let cy = room.qY[h]; h++; 
+                    if (!edge) comp.push({x: cx, y: cy});
+                    
+                    if (h > 400) { edge = true; comp.length = 0; }
+                    if (cx <= 0 || cx >= gridW-1 || cy <= 0 || cy >= gridH-1) { edge = true; comp.length = 0; }
+                    if (startOwner !== null && armyLocs[`${cx}_${cy}`] && armyLocs[`${cx}_${cy}`].includes(startOwner)) hasDefendingArmy = true;
+                    
+                    let neighbors = [ [cx+1, cy], [cx-1, cy], [cx, cy+1], [cx, cy-1] ];
+                    for (let i=0; i<4; i++) {
+                        let nx = neighbors[i][0]; let ny = neighbors[i][1];
+                        if (nx >= 0 && nx < gridW && ny >= 0 && ny < gridH) {
+                            let nKey = `${nx}_${ny}`;
+                            let nOwn = room.territory[nKey] ? room.territory[nKey].owner : null;
+                            if (nOwn === startOwner) {
+                                let nIdx = ny * gridW + nx;
+                                if (room.vstd[nIdx] === 0) {
+                                    room.vstd[nIdx] = 1;
+                                    room.qX[t] = nx; room.qY[t] = ny; t++;
+                                }
+                            } else {
+                                owners.add(nOwn === null ? 'neutral' : nOwn);
+                            }
+                        }
+                    }
+                }
+                
+                if (!edge && owners.size === 1 && !hasDefendingArmy) {
+                    let winId = Array.from(owners)[0];
+                    if (winId !== startOwner && winId !== 'neutral') { 
+                        let rId = `reg_${winId}_cap`; 
+                        if (!room.regions[rId]) room.regions[rId] = { name: "Оккупация", owner: winId, cells: 0, level: 1, roadLevel: 0, prodLevel: 0, bizLevel: 0, recLevel: 0 };
+                        
+                        for (let i = comp.length - 1; i >= 0; i--) {
+                            room.fillQ.push({x: comp[i].x, y: comp[i].y, owner: winId, regId: rId});
+                        }
+                        if (startOwner) io.to(roomId).emit('newsEvent', `⚔️ Окружение! Войска ${room.countries[winId] ? room.countries[winId].name : 'врага'} замкнули котел!`);
+                    }
+                }
+            }
+            room.sX++; checked++;
+            if (room.sX >= gridW) { room.sX = 0; room.sY++; if (room.sY >= gridH) { room.sY = 0; room.mapChangedForCauldrons = false; room.vstd.fill(0); break; } }
+        }
+    }
+}, 50);
+
+setInterval(() => {
+    for (let roomId in rooms) {
+        let room = rooms[roomId]; let changed = false;
+        
+        for (let id in room.countries) {
+            if (!room.countries[id].isSpawned) continue;
+            
+            let totalRec = 0; let totalProd = 0; let regCount = 0;
+            let bizIncome = 0; let infraIncome = 0;
+            for (let r in room.regions) {
+                if (room.regions[r].owner === id) {
+                    regCount++;
+                    totalRec += (room.regions[r].recLevel || 0);
+                    totalProd += (room.regions[r].prodLevel || 0);
+                    bizIncome += (room.regions[r].bizLevel || 0) * 100 + (room.regions[r].cells * (room.regions[r].bizLevel || 0) * 1.5);
+                    infraIncome += room.regions[r].cells * 2.0 * (room.regions[r].level || 1);
+                }
+            }
+            
+            let happiness = 40;
+            if (regCount > 0) happiness = Math.min(100, 40 + (totalRec / regCount) * 6);
+            room.countries[id].happiness = happiness;
+
+            let main = 0; 
+            for (let a in room.armies) if (room.armies[a].owner === id) main += room.armies[a].count * 1; 
+            
+            let upkeepReduction = Math.min(0.8, totalProd * 0.02); 
+            let armyUpkeep = main * (1 - upkeepReduction);
+
+            let inc = 100 - armyUpkeep; 
+            inc += infraIncome + bizIncome;
+            
+            inc = inc * (happiness / 50); 
+            
+            room.countries[id].dollars += inc; 
+            room.countries[id].lastIncome = inc;
+
+            const popGrowth = Math.floor(room.countries[id].cells * 0.5 * (happiness / 50)); 
+            room.countries[id].population += popGrowth;
+            room.countries[id].cap = Math.floor(room.countries[id].population * 0.1);
+            
+            if (room.countries[id].military < room.countries[id].cap) {
+                room.countries[id].military += Math.floor(room.countries[id].cells * 2);
+                if (room.countries[id].military > room.countries[id].cap) room.countries[id].military = room.countries[id].cap;
+            }
+            changed = true;
+        }
+        if (changed) io.to(roomId).emit('updateResources', room.countries);
+    }
+}, 1000);
+
+server.listen(process.env.PORT || 3000, () => console.log('HOI4 SERVER ONLINE'));
