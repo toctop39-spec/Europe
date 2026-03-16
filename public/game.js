@@ -102,7 +102,6 @@ document.getElementById('deployBtn')?.addEventListener('click', () => { const am
 document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
 document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
 
-// --- СЛУШАТЕЛИ ПРОКАЧКИ ---
 document.getElementById('upInfraBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeInfra', clickedRegionId); });
 document.getElementById('upRoadBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRoads', clickedRegionId); });
 document.getElementById('upProdBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeProd', clickedRegionId); });
@@ -158,7 +157,6 @@ function updateUI() {
     }
 }
 
-// --- ФУНКЦИЯ ОБНОВЛЕНИЯ ПАНЕЛИ РЕГИОНА ---
 function updateRegionPanel() {
     const rp = document.getElementById('regionPanel'); if (!rp) return;
     if (!clickedRegionId || !regions[clickedRegionId]) { rp.style.display = 'none'; return; }
@@ -181,19 +179,23 @@ function updateRegionPanel() {
         if(renBtn) renBtn.style.display = 'inline-block'; 
         upgList.style.display = 'flex';
         
+        // ФУНКЦИЯ РАСЧЕТА ДИНАМИЧЕСКОЙ СТОИМОСТИ (Уровень + Размер региона)
+        const cells = reg.cells || 0;
+        const calcCost = (base, mult, lvl) => (base * (lvl + 1)) + (cells * mult * (lvl + 1));
+        
         const setBtn = (id, lvl, cost) => {
             let btn = document.getElementById(id);
             if(btn) {
                 if(lvl >= 10) { btn.innerText = "МАКС"; btn.disabled = true; }
-                else { btn.innerText = cost + " 💵"; btn.disabled = false; }
+                else { btn.innerText = cost.toLocaleString() + " 💵"; btn.disabled = false; }
             }
         };
 
-        setBtn('upInfraBtn', reg.level||1, 5000);
-        setBtn('upRoadBtn', reg.roadLevel||0, 3000);
-        setBtn('upProdBtn', reg.prodLevel||0, 4000);
-        setBtn('upBizBtn', reg.bizLevel||0, 6000);
-        setBtn('upRecBtn', reg.recLevel||0, 3000);
+        setBtn('upInfraBtn', reg.level||1, calcCost(5000, 10, reg.level||1));
+        setBtn('upRoadBtn', reg.roadLevel||0, calcCost(3000, 5, reg.roadLevel||0));
+        setBtn('upProdBtn', reg.prodLevel||0, calcCost(4000, 8, reg.prodLevel||0));
+        setBtn('upBizBtn', reg.bizLevel||0, calcCost(6000, 12, reg.bizLevel||0));
+        setBtn('upRecBtn', reg.recLevel||0, calcCost(3000, 5, reg.recLevel||0));
         
         let cityCell = territory[`${reg.cityX}_${reg.cityY}`];
         let isOccupied = cityCell && cityCell.core !== myId && countries[cityCell.core] && countries[cityCell.core].cells > 0;
@@ -207,7 +209,6 @@ function updateRegionPanel() {
     }
 }
 
-// --- ФУНКЦИЯ ОБНОВЛЕНИЯ ПАНЕЛИ АРМИИ ---
 function updateArmyPanel() {
     const ap = document.getElementById('armyPanel'); if (!ap) return;
     const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
@@ -228,7 +229,6 @@ function updateArmyPanel() {
     }
 }
 
-// --- ФУНКЦИЯ ОБНОВЛЕНИЯ РЕДАКТОРА ---
 function updateEditorList() {
     const list = document.getElementById('edCountryList');
     if (!list || !isEditorMode) return;
