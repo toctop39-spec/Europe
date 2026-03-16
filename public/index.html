@@ -40,6 +40,10 @@
         .btn-civil:hover { background: linear-gradient(180deg, #3498db, #2980b9); filter: brightness(1.1); }
         .btn-civil:disabled { background: #444 !important; color: #777; cursor: not-allowed; filter: none; }
 
+        .upg-btn { background: linear-gradient(180deg, #27ae60, #1e8449); color: white; border: 1px solid #111; padding: 5px 10px; font-size: 11px; cursor: pointer; border-radius: 2px; font-weight: bold; width: auto; margin: 0; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2); transition: 0.2s; }
+        .upg-btn:hover:not(:disabled) { filter: brightness(1.2); }
+        .upg-btn:disabled { background: #333; color: #666; cursor: not-allowed; border-color: #222; }
+
         #regionPanel { position: absolute; right: 10px; top: 50px; width: 280px; background: #1e2224; border: 2px solid #111; padding: 15px; z-index: 10; display: none; box-shadow: inset 0 0 10px rgba(0,0,0,0.8), -5px 5px 15px rgba(0,0,0,0.5); animation: slideInRight 0.4s ease-out; }
         #armyPanel { position: absolute; bottom: 15px; left: 50%; background: #1e2224; border: 2px solid #111; padding: 15px; z-index: 10; display: none; text-align: center; box-shadow: inset 0 0 10px rgba(0,0,0,0.8), 0 5px 20px rgba(0,0,0,0.6); animation: slideUp 0.3s ease-out; transform: translateX(-50%); }
         
@@ -91,6 +95,7 @@
         </div>
         <div style="display: flex; gap: 10px;">
             <div class="stat-box" title="Сервер"><span class="stat-icon">📡</span> <span id="myRoomCode" style="color:#f1c40f; font-weight:bold;">---</span></div>
+            <div class="stat-box" title="Счастье Народа"><span class="stat-icon">😊</span> <span id="myHappiness" style="color:#2ecc71; font-weight:bold;">50%</span></div>
             <div class="stat-box" title="Площадь"><span class="stat-icon">🗺️</span> <span id="myArea">0</span> км²</div>
             <div class="stat-box" title="Население"><span class="stat-icon">👥</span> <span id="myPop">0</span></div>
             <div class="stat-box" title="Рекруты"><span class="stat-icon">⚔️</span> <span id="myMilitary">0</span> / <span id="myCap">0</span></div>
@@ -129,17 +134,35 @@
             <button id="renameRegBtn" style="background: none; border: none; color: #7f8c8d; cursor: pointer; font-size:16px;">✏️</button>
         </div>
         <p style="font-size: 12px; color: #bdc3c7; margin: 5px 0;">Контроллер: <span id="regOwner" style="color:#fff; font-weight:bold;"></span></p>
-        <p style="font-size: 12px; color: #bdc3c7; margin: 5px 0;">Экономика (Инфра): <b style="color:#f1c40f;"><span id="regLevel">1</span>/10</b></p>
-        <p style="font-size: 12px; color: #bdc3c7; margin: 5px 0;">Логистика (Дороги): <b style="color:#2ecc71;"><span id="regRoadLevel">0</span>/10</b></p>
         
         <hr>
         
-        <button id="upgradeRegBtn" class="btn-civil" style="background:linear-gradient(180deg, #27ae60, #1e8449); margin-bottom: 5px;">Развить экономику (5000 💵)</button>
-        <button id="upgradeRoadBtn" class="btn-civil" style="background:linear-gradient(180deg, #2980b9, #1f618d);">Улучшить дороги (3000 💵)</button>
+        <div id="upgradeList" style="display:flex; flex-direction:column; gap:8px; margin-bottom:15px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; color:#bdc3c7;">🏭 Инфраструктура: <b id="regLevel" style="color:#f1c40f;">1/10</b></span>
+                <button id="upInfraBtn" class="upg-btn">5000 💵</button>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; color:#bdc3c7;">🛣️ Логистика (Дороги): <b id="regRoadLevel" style="color:#2ecc71;">0/10</b></span>
+                <button id="upRoadBtn" class="upg-btn">3000 💵</button>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; color:#bdc3c7;">🛠️ Производство: <b id="regProdLevel" style="color:#e67e22;">0/10</b></span>
+                <button id="upProdBtn" class="upg-btn" style="background: linear-gradient(180deg, #d35400, #a04000);">4000 💵</button>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; color:#bdc3c7;">🏢 Бизнес-центры: <b id="regBizLevel" style="color:#3498db;">0/10</b></span>
+                <button id="upBizBtn" class="upg-btn" style="background: linear-gradient(180deg, #2980b9, #1f618d);">6000 💵</button>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12px; color:#bdc3c7;">🌴 Зоны отдыха: <b id="regRecLevel" style="color:#9b59b6;">0/10</b></span>
+                <button id="upRecBtn" class="upg-btn" style="background: linear-gradient(180deg, #8e44ad, #732d91);">3000 💵</button>
+            </div>
+        </div>
         
-        <div style="display:flex; gap:5px; margin-bottom: 5px; margin-top:15px;">
+        <div style="display:flex; gap:5px; margin-bottom: 5px;">
             <input type="number" id="deployAmount" value="1000" min="100" step="100" style="flex:1; background:#111; color:#fff; border:1px solid #444; padding:8px; font-weight:bold; text-align:center;">
-            <button id="deployBtn" class="btn-civil" style="margin:0; flex:2; background:linear-gradient(180deg, #8e44ad, #732d91);">Развернуть дивизии</button>
+            <button id="deployBtn" class="btn-civil" style="margin:0; flex:2; background:linear-gradient(180deg, #2c3e50, #1a252f);">Развернуть дивизии</button>
         </div>
 
         <button id="closeRegBtn" style="width: 100%; padding: 8px; margin-top: 10px; background: linear-gradient(180deg, #555, #333); color: white; border: 1px solid #111; cursor:pointer; text-transform:uppercase; font-size:10px;">Закрыть</button>
