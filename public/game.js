@@ -92,7 +92,7 @@ document.getElementById('joinBtn')?.addEventListener('click', () => {
 
 socket.on('joinSuccess', (cId) => { myId = cId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('sideMenu').style.display = 'block'; isPlaying = true; updateEditorList(); if (countries[myId]) updateUI(); });
 
-window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '' }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; } }); }
+window.startEditor = function() { isEditorMode = true; socket.emit('createRoom', { presetName: '' }, (res) => { if (res.success) { currentRoomId = res.roomId; document.getElementById('setupScreen').style.display = 'none'; document.getElementById('topBar').style.display = 'flex'; document.getElementById('myRoomCode').innerText = "РЕДАКТОР"; document.getElementById('sideMenu').style.display = 'block'; document.getElementById('editorTabBtn').style.display = 'block'; switchTab('tab-editor'); showMsg("Вы в Редакторе!"); isPlaying = true; updateEditorList(); } }); }
 window.edCreateCountry = function() { const name = document.getElementById('edCountryName').value || 'Новая Страна'; const color = document.getElementById('edCountryColor').value; let finalFlag = edBase64Flag; if (!finalFlag) { const tCnv = document.createElement('canvas'); tCnv.width = 64; tCnv.height = 64; const tCtx = tCnv.getContext('2d'); tCtx.fillStyle = color; tCtx.fillRect(0,0,64,64); finalFlag = tCnv.toDataURL(); } socket.emit('joinGame', { isNew: true, name, color, flag: finalFlag }); edBase64Flag = null; const fi = document.getElementById('edCountryFlagFile'); if(fi) fi.value = ""; }
 window.edSwitchCountry = function(cId) { socket.emit('switchCountry', cId); }
 window.edSaveAndExit = function() { const presetName = prompt("Введите название заготовки:"); if (presetName && presetName.trim() !== "") { socket.emit('savePreset', presetName.trim()); } }
@@ -103,7 +103,7 @@ document.getElementById('deployBtn')?.addEventListener('click', () => { const am
 document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
 document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
 
-// --- СЛУШАТЕЛИ НОВЫХ КНОПОК ПРОКАЧКИ ---
+// Слушатели кнопок прокачки
 document.getElementById('upInfraBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeInfra', clickedRegionId); });
 document.getElementById('upRoadBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRoads', clickedRegionId); });
 document.getElementById('upProdBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeProd', clickedRegionId); });
@@ -142,7 +142,6 @@ function updateUI() {
         
         isSpawned = country.isSpawned;
         
-        // --- ОБНОВЛЕНИЕ СЧАСТЬЯ ---
         let hap = Math.floor(country.happiness || 50);
         const hapEl = document.getElementById('myHappiness');
         if (hapEl) {
@@ -182,7 +181,6 @@ function updateRegionPanel() {
         if(renBtn) renBtn.style.display = 'inline-block'; 
         upgList.style.display = 'flex';
         
-        // Функция для обновления состояния кнопки
         const setBtn = (id, lvl, cost) => {
             let btn = document.getElementById(id);
             if(btn) {
@@ -206,6 +204,26 @@ function updateRegionPanel() {
         if(renBtn) renBtn.style.display = 'none'; 
         upgList.style.display = 'none';
         deployBtn.disabled = true;
+    }
+}
+
+function updateArmyPanel() {
+    const ap = document.getElementById('armyPanel'); if (!ap) return;
+    const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
+    
+    if (mySelected.length > 0 && mySelected.length === selectedArmies.length) {
+        ap.style.display = 'block';
+        let totalCount = 0;
+        mySelected.forEach(id => totalCount += armies[id].count);
+        document.getElementById('armyCount').innerText = Math.floor(totalCount) + (mySelected.length > 1 ? ` (${mySelected.length} див.)` : ' ед.');
+    } else { 
+        ap.style.display = 'none'; 
+        isSelectingAutoAttackTarget = false;
+        if (document.getElementById('autoAttackBtn')) {
+            document.getElementById('autoAttackBtn').style.background = 'linear-gradient(180deg, #f39c12, #d35400)';
+            document.getElementById('autoAttackBtn').innerText = 'План Наступления';
+            document.getElementById('autoAttackTip').style.display = 'none';
+        }
     }
 }
 
@@ -350,26 +368,6 @@ function drawMap() {
 canvas.addEventListener('wheel', (e) => { e.preventDefault(); const zoomAmount = 0.1; const oldZoom = camera.zoom; const minZoom = Math.max(canvas.width / WORLD_WIDTH, canvas.height / WORLD_HEIGHT); camera.zoom = e.deltaY > 0 ? Math.max(minZoom, camera.zoom - zoomAmount) : Math.min(6, camera.zoom + zoomAmount); const rect = canvas.getBoundingClientRect(); const mouseX = (e.clientX - rect.left) * (canvas.width / rect.width); const mouseY = (e.clientY - rect.top) * (canvas.height / rect.height); camera.x = mouseX - (mouseX - camera.x) * (camera.zoom / oldZoom); camera.y = mouseY - (mouseY - camera.y) * (camera.zoom / oldZoom); });
 function getWorldCoords(e) { const rect = canvas.getBoundingClientRect(); const canvasMouseX = (e.clientX - rect.left) * (canvas.width / rect.width); const canvasMouseY = (e.clientY - rect.top) * (canvas.height / rect.height); let wx = (canvasMouseX - camera.x) / camera.zoom; let wy = (canvasMouseY - camera.y) / camera.zoom; return { x: Math.max(0, Math.min(WORLD_WIDTH, wx)), y: Math.max(0, Math.min(WORLD_HEIGHT, wy)) }; }
 
-    // --- ФУНКЦИЯ ДЛЯ РАБОТЫ РЕДАКТОРА (Исправление ошибки ReferenceError) ---
-function updateEditorList() {
-    const list = document.getElementById('edCountryList');
-    if (!list || !isEditorMode) return;
-    
-    list.innerHTML = '';
-    for (let cId in countries) {
-        const c = countries[cId];
-        list.innerHTML += `
-            <div style="display:flex; justify-content:space-between; align-items:center; background:#151718; padding:8px; margin-bottom:5px; border:1px solid #333; border-radius: 2px;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="width:14px; height:14px; background:${c.color}; border:1px solid #000; border-radius:2px;"></div>
-                    <span style="color:#ecf0f1; font-size:12px; font-weight:bold;">${c.name}</span>
-                </div>
-                <button onclick="edSwitchCountry('${cId}')" style="background:linear-gradient(180deg, #2980b9, #2471a3); color:#fff; border:1px solid #111; padding:4px 8px; cursor:pointer; font-size:10px; font-weight:bold; border-radius:2px; text-transform:uppercase;">Играть за них</button>
-            </div>
-        `;
-    }
-}
-
 canvas.addEventListener('mousedown', (e) => { 
     const world = getWorldCoords(e);
     if (e.button === 1) { isPanning = true; lastMouse = {x: e.clientX, y: e.clientY}; return; }
@@ -413,7 +411,6 @@ canvas.addEventListener('mouseup', (e) => {
         isDrawingRegion = false; lassoPoints = []; document.getElementById('drawRegionBtn').innerText = "Оформить новый регион"; return;
     }
 
-
     if (e.button === 0 && isSelecting && !isSelectingAutoAttackTarget) {
         isSelecting = false; const world = getWorldCoords(e);
         const minX = Math.min(selectionBox.startX, world.x); const maxX = Math.max(selectionBox.startX, world.x); const minY = Math.min(selectionBox.startY, world.y); const maxY = Math.max(selectionBox.startY, world.y);
@@ -423,3 +420,22 @@ canvas.addEventListener('mouseup', (e) => {
         if (isClick && selectedArmies.length === 0) { const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`; if (territory[key] && territory[key].owner === myId) { clickedRegionId = territory[key].regionId; updateRegionPanel(); } else { clickedRegionId = null; updateRegionPanel(); } } else if (!isClick || selectedArmies.length > 0) { clickedRegionId = null; updateRegionPanel(); }
     }
 });
+
+function updateEditorList() {
+    const list = document.getElementById('edCountryList');
+    if (!list || !isEditorMode) return;
+    
+    list.innerHTML = '';
+    for (let cId in countries) {
+        const c = countries[cId];
+        list.innerHTML += `
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#151718; padding:8px; margin-bottom:5px; border:1px solid #333; border-radius: 2px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="width:14px; height:14px; background:${c.color}; border:1px solid #000; border-radius:2px;"></div>
+                    <span style="color:#ecf0f1; font-size:12px; font-weight:bold;">${c.name}</span>
+                </div>
+                <button onclick="edSwitchCountry('${cId}')" style="background:linear-gradient(180deg, #2980b9, #2471a3); color:#fff; border:1px solid #111; padding:4px 8px; cursor:pointer; font-size:10px; font-weight:bold; border-radius:2px; text-transform:uppercase;">Играть</button>
+            </div>
+        `;
+    }
+}
