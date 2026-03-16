@@ -19,7 +19,6 @@ let isPanning = false; let lastMouse = {x: 0, y: 0};
 let selectedArmies = []; let isSelecting = false; let selectionBox = { startX: 0, startY: 0, endX: 0, endY: 0 };
 let isDrawingRegion = false; let currentDrawingRegionId = null; let clickedRegionId = null; let lassoPoints = [];
 let isSelectingAutoAttackTarget = false;
-
 let hoveredRegionId = null;
 
 const sysMsg = document.getElementById('systemMsg');
@@ -103,7 +102,7 @@ document.getElementById('deployBtn')?.addEventListener('click', () => { const am
 document.getElementById('closeRegBtn')?.addEventListener('click', () => { clickedRegionId = null; updateRegionPanel(); });
 document.getElementById('renameRegBtn')?.addEventListener('click', () => { if (clickedRegionId && regions[clickedRegionId] && regions[clickedRegionId].owner === myId) { const newName = prompt("Новое название:", regions[clickedRegionId].name); if (newName) socket.emit('renameRegion', { regionId: clickedRegionId, newName: newName }); } });
 
-// Слушатели кнопок прокачки
+// --- СЛУШАТЕЛИ ПРОКАЧКИ ---
 document.getElementById('upInfraBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeInfra', clickedRegionId); });
 document.getElementById('upRoadBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeRoads', clickedRegionId); });
 document.getElementById('upProdBtn')?.addEventListener('click', () => { if(clickedRegionId) socket.emit('upgradeProd', clickedRegionId); });
@@ -159,6 +158,7 @@ function updateUI() {
     }
 }
 
+// --- ФУНКЦИЯ ОБНОВЛЕНИЯ ПАНЕЛИ РЕГИОНА ---
 function updateRegionPanel() {
     const rp = document.getElementById('regionPanel'); if (!rp) return;
     if (!clickedRegionId || !regions[clickedRegionId]) { rp.style.display = 'none'; return; }
@@ -207,6 +207,7 @@ function updateRegionPanel() {
     }
 }
 
+// --- ФУНКЦИЯ ОБНОВЛЕНИЯ ПАНЕЛИ АРМИИ ---
 function updateArmyPanel() {
     const ap = document.getElementById('armyPanel'); if (!ap) return;
     const mySelected = selectedArmies.filter(id => armies[id] && armies[id].owner === myId);
@@ -224,6 +225,26 @@ function updateArmyPanel() {
             document.getElementById('autoAttackBtn').innerText = 'План Наступления';
             document.getElementById('autoAttackTip').style.display = 'none';
         }
+    }
+}
+
+// --- ФУНКЦИЯ ОБНОВЛЕНИЯ РЕДАКТОРА ---
+function updateEditorList() {
+    const list = document.getElementById('edCountryList');
+    if (!list || !isEditorMode) return;
+    
+    list.innerHTML = '';
+    for (let cId in countries) {
+        const c = countries[cId];
+        list.innerHTML += `
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#151718; padding:8px; margin-bottom:5px; border:1px solid #333; border-radius: 2px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <div style="width:14px; height:14px; background:${c.color}; border:1px solid #000; border-radius:2px;"></div>
+                    <span style="color:#ecf0f1; font-size:12px; font-weight:bold;">${c.name}</span>
+                </div>
+                <button onclick="edSwitchCountry('${cId}')" style="background:linear-gradient(180deg, #2980b9, #2471a3); color:#fff; border:1px solid #111; padding:4px 8px; cursor:pointer; font-size:10px; font-weight:bold; border-radius:2px; text-transform:uppercase;">Играть</button>
+            </div>
+        `;
     }
 }
 
@@ -420,22 +441,3 @@ canvas.addEventListener('mouseup', (e) => {
         if (isClick && selectedArmies.length === 0) { const key = `${Math.floor(world.x/TILE_SIZE)}_${Math.floor(world.y/TILE_SIZE)}`; if (territory[key] && territory[key].owner === myId) { clickedRegionId = territory[key].regionId; updateRegionPanel(); } else { clickedRegionId = null; updateRegionPanel(); } } else if (!isClick || selectedArmies.length > 0) { clickedRegionId = null; updateRegionPanel(); }
     }
 });
-
-function updateEditorList() {
-    const list = document.getElementById('edCountryList');
-    if (!list || !isEditorMode) return;
-    
-    list.innerHTML = '';
-    for (let cId in countries) {
-        const c = countries[cId];
-        list.innerHTML += `
-            <div style="display:flex; justify-content:space-between; align-items:center; background:#151718; padding:8px; margin-bottom:5px; border:1px solid #333; border-radius: 2px;">
-                <div style="display:flex; align-items:center; gap:8px;">
-                    <div style="width:14px; height:14px; background:${c.color}; border:1px solid #000; border-radius:2px;"></div>
-                    <span style="color:#ecf0f1; font-size:12px; font-weight:bold;">${c.name}</span>
-                </div>
-                <button onclick="edSwitchCountry('${cId}')" style="background:linear-gradient(180deg, #2980b9, #2471a3); color:#fff; border:1px solid #111; padding:4px 8px; cursor:pointer; font-size:10px; font-weight:bold; border-radius:2px; text-transform:uppercase;">Играть</button>
-            </div>
-        `;
-    }
-}
